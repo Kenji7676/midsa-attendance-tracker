@@ -1,0 +1,6 @@
+{
+  "name": "MIDSA Attendance Tracker",
+  "description": "Official attendance tracking system for MIDSA with event management, scholar records, batch CSV registration, QR badge generation, and mobile QR code scanner.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
