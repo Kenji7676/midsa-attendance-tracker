@@ -10,7 +10,6 @@ import {
   TrendingUp,
   Clock,
   ArrowRight,
-  Database,
   ShieldCheck,
   Sparkles,
   MapPin,
@@ -107,8 +106,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* 4 Core Metric KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Core Metric KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Card 1: Total Registered Scholars */}
         <div
           onClick={() => onNavigateTab('scholars')}
@@ -172,25 +171,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
             <span>Across all assemblies</span>
             <ArrowRight className="w-3.5 h-3.5 text-emerald-600 transform group-hover:translate-x-1 transition-transform" />
-          </div>
-        </div>
-
-        {/* Card 4: SQLite RDBMS Status */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Database Engine</span>
-            <div className="w-9 h-9 rounded-xl bg-indigo-50 text-[#004ACD] flex items-center justify-center">
-              <Database className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-center space-x-2">
-            <span className="text-lg sm:text-xl font-extrabold text-slate-900">
-              SQLite RDBMS
-            </span>
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-          </div>
-          <div className="mt-2 text-xs text-emerald-700 font-semibold flex items-center gap-1">
-            <span>Relational schema synced</span>
           </div>
         </div>
       </div>

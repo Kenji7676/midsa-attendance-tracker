@@ -5,7 +5,9 @@ import { playSuccessSound, playWarningSound } from '../utils/audio';
 import confetti from 'canvas-confetti';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { ConfirmModal } from './ConfirmModal';
-import { formatScholarName, resolveScholarScholarshipType } from '../utils/formatters';
+import { GawadIskoCertModal } from './GawadIskoCertModal';
+import { formatScholarName, resolveScholarScholarshipType, formatYearLevelDisplay, parseYearProgram, cleanAcademicProgram } from '../utils/formatters';
+import { realtimeSync } from '../services/realtime';
 import {
   QrCode,
   Calendar,
@@ -21,8 +23,6 @@ import {
   RefreshCw,
   Users,
   ChevronDown,
-  Volume2,
-  VolumeX,
   X,
   Pencil,
   LogIn,
@@ -78,6 +78,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   // Single record delete
   const [recordToDelete, setRecordToDelete] = useState<AttendanceRecord | null>(null);
   const [isDeletingRecord, setIsDeletingRecord] = useState(false);
+  const [gawadIskoPromptScholar, setGawadIskoPromptScholar] = useState<Scholar | null>(null);
 
   // Multi-select & Selection Mode states for uniform UX
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -123,17 +124,46 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     }
   }, [selectedEvent?.id]);
 
-  const loadAttendance = async (eventId: string) => {
-    setLoadingRecords(true);
+  const loadAttendance = async (eventId: string, isSilent = false) => {
+    if (!isSilent) {
+      setLoadingRecords(true);
+    }
     try {
       const records = await api.getAttendance(eventId);
       setAttendanceRecords(records);
     } catch (err) {
       console.error('Error fetching event attendance:', err);
     } finally {
-      setLoadingRecords(false);
+      if (!isSilent) {
+        setLoadingRecords(false);
+      }
     }
   };
+
+  // Real-time synchronization across devices (phone scans instantly show up on laptop)
+  useEffect(() => {
+    if (!selectedEvent?.id) return;
+
+    const currentEventId = selectedEvent.id;
+
+    // 1. Instant SSE notification from server when any phone or tablet records attendance
+    const unsubscribe = realtimeSync.subscribe((event) => {
+      if (event.type === 'attendance') {
+        loadAttendance(currentEventId, true);
+        onRefreshData();
+      }
+    });
+
+    // 2. Continuous fallback polling (every 3s) for 100% resilient auto-sync
+    const pollInterval = setInterval(() => {
+      loadAttendance(currentEventId, true);
+    }, 3000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(pollInterval);
+    };
+  }, [selectedEvent?.id, onRefreshData]);
 
   // State & handler to update event status directly from Attendance Workspace
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
@@ -270,6 +300,16 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     setIsScannerModalOpen(false);
   };
 
+  // Dismiss scan feedback card immediately to scan next attendee
+  const handleDismissScanFeedback = () => {
+    if (autoCloseTimerRef.current) {
+      clearTimeout(autoCloseTimerRef.current);
+      autoCloseTimerRef.current = null;
+    }
+    setScanSuccessFeedback(null);
+    isProcessingScanRef.current = false;
+  };
+
   // Switch between front/back camera
   const toggleCameraFacing = async () => {
     await stopScanner();
@@ -364,13 +404,27 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         loadAttendance(selectedEvent.id);
         onRefreshData();
 
-        // Auto-close scanner pop up after acknowledging successful student QR scan
-        if (autoCloseTimerRef.current) {
-          clearTimeout(autoCloseTimerRef.current);
+        const isSignIn = res.action === 'sign_in' || !res.action;
+        const isAwardee = res.scholar?.gawad_isko_awardee?.toLowerCase() === 'yes';
+
+        if (isSignIn && isAwardee && res.scholar) {
+          if (autoCloseTimerRef.current) {
+            clearTimeout(autoCloseTimerRef.current);
+            autoCloseTimerRef.current = null;
+          }
+          setGawadIskoPromptScholar(res.scholar);
+        } else {
+          // Keep scanner active for continuous attendee scanning!
+          // Automatically dismiss the feedback overlay after 3.5s to return to live scanning
+          if (autoCloseTimerRef.current) {
+            clearTimeout(autoCloseTimerRef.current);
+          }
+          autoCloseTimerRef.current = setTimeout(() => {
+            setScanSuccessFeedback(null);
+            isProcessingScanRef.current = false;
+            autoCloseTimerRef.current = null;
+          }, 3500);
         }
-        autoCloseTimerRef.current = setTimeout(() => {
-          handleCloseScannerModal();
-        }, 1400);
       } else if (res.alreadyCheckedIn) {
         if (audioFeedback) playWarningSound();
       } else {
@@ -413,6 +467,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         if (audioFeedback) playSuccessSound();
         loadAttendance(selectedEvent.id);
         onRefreshData();
+
+        const isSignIn = res.action === 'sign_in' || !res.action;
+        const isAwardee = res.scholar?.gawad_isko_awardee?.toLowerCase() === 'yes';
+
+        if (isSignIn && isAwardee && res.scholar) {
+          setGawadIskoPromptScholar(res.scholar);
+        }
       } else {
         if (audioFeedback) playWarningSound();
       }
@@ -425,6 +486,25 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     } finally {
       setIsManualSubmitting(false);
     }
+  };
+
+  const handleProceedGawadIsko = async (receivedCertificate: boolean) => {
+    if (gawadIskoPromptScholar) {
+      if (receivedCertificate) {
+        try {
+          await api.updateScholarCertificate(gawadIskoPromptScholar.id, true);
+        } catch (e) {
+          console.error('Failed to update certificate status:', e);
+        }
+      }
+      onRefreshData();
+      if (selectedEvent) {
+        loadAttendance(selectedEvent.id);
+      }
+    }
+    setGawadIskoPromptScholar(null);
+    setScanSuccessFeedback(null);
+    isProcessingScanRef.current = false;
   };
 
   // Manual Sign-Out for a scholar with an existing sign-in record
@@ -669,7 +749,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       'Scholar Name',
       'Scholarship Type',
       'College',
-      'Year/Program',
+      'Year & Program',
       'Email',
       'Sign-in Timestamp',
       'Sign-out Timestamp',
@@ -775,7 +855,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Event Selection Header Card */}
-      <div className="bg-white rounded-2xl shadow-xs border border-slate-200 p-5">
+      <div className="bg-white rounded-2xl shadow-xs border border-slate-200 p-4 sm:p-5 overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <h2 className="text-base sm:text-lg font-bold text-slate-800">
@@ -787,13 +867,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           </div>
 
           {/* Event Dropdown Picker */}
-          <div className="flex items-center space-x-3 w-full lg:w-auto">
-            <div className="relative flex-1 sm:w-80">
+          <div className="flex items-center space-x-2 sm:space-x-3 w-full lg:w-auto min-w-0">
+            <div className="relative flex-1 sm:w-80 min-w-0">
               <select
                 id="event-picker-dropdown"
                 value={selectedEvent?.id || ''}
                 onChange={(e) => onSelectEvent(e.target.value)}
-                className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border-2 border-[#004ACD] bg-white text-slate-800 font-bold text-xs focus:outline-none focus:ring-2 focus:ring-[#00F7FF] shadow-xs cursor-pointer appearance-none"
+                className="w-full pl-3 pr-8 sm:pl-3.5 sm:pr-10 py-2.5 rounded-xl border-2 border-[#004ACD] bg-white text-slate-800 font-bold text-xs focus:outline-none focus:ring-2 focus:ring-[#00F7FF] shadow-xs cursor-pointer appearance-none truncate max-w-full"
               >
                 <option value="">-- Select an Event to Take Attendance --</option>
                 {events.map((evt) => (
@@ -802,56 +882,58 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   </option>
                 ))}
               </select>
-              <ChevronDown className="w-4 h-4 text-[#004ACD] absolute right-3 top-3 pointer-events-none" />
+              <ChevronDown className="w-4 h-4 text-[#004ACD] absolute right-2.5 sm:right-3 top-3 pointer-events-none shrink-0" />
             </div>
 
             {selectedEvent && (
-              <button
-                onClick={() => loadAttendance(selectedEvent.id)}
-                title="Refresh attendance records"
-                className="p-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 transition-colors shrink-0"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
+              <div className="flex items-center space-x-2 shrink-0">
+                <button
+                  onClick={() => loadAttendance(selectedEvent.id)}
+                  title="Refresh attendance records"
+                  className="p-2 sm:p-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 transition-colors shrink-0 cursor-pointer"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
             )}
           </div>
         </div>
 
         {/* Selected Event Details Strip */}
         {selectedEvent && (
-          <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs animate-in fade-in duration-200">
-            <div className="flex items-center space-x-2 text-slate-700">
-              <Calendar className="w-4 h-4 text-[#004ACD]" />
-              <div>
+          <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-xs animate-in fade-in duration-200">
+            <div className="flex items-center space-x-2 text-slate-700 min-w-0">
+              <Calendar className="w-4 h-4 text-[#004ACD] shrink-0" />
+              <div className="min-w-0">
                 <span className="block text-[10px] text-slate-400 font-medium uppercase">Date</span>
-                <span className="font-bold">{selectedEvent.date}</span>
+                <span className="font-bold truncate block">{selectedEvent.date}</span>
               </div>
             </div>
 
-            <div className="flex items-center space-x-2 text-slate-700">
-              <Clock className="w-4 h-4 text-[#004ACD]" />
-              <div>
+            <div className="flex items-center space-x-2 text-slate-700 min-w-0">
+              <Clock className="w-4 h-4 text-[#004ACD] shrink-0" />
+              <div className="min-w-0">
                 <span className="block text-[10px] text-slate-400 font-medium uppercase">Time</span>
-                <span className="font-bold truncate">{selectedEvent.time || 'All Day'}</span>
+                <span className="font-bold truncate block">{selectedEvent.time || 'All Day'}</span>
               </div>
             </div>
 
-            <div className="flex items-center space-x-2 text-slate-700">
-              <MapPin className="w-4 h-4 text-[#004ACD]" />
-              <div>
+            <div className="flex items-center space-x-2 text-slate-700 min-w-0">
+              <MapPin className="w-4 h-4 text-[#004ACD] shrink-0" />
+              <div className="min-w-0">
                 <span className="block text-[10px] text-slate-400 font-medium uppercase">Venue</span>
-                <span className="font-bold truncate max-w-[150px]">{selectedEvent.venue}</span>
+                <span className="font-bold truncate block">{selectedEvent.venue}</span>
               </div>
             </div>
 
-            <div className="flex items-center space-x-2 text-slate-700">
-              <Users className="w-4 h-4 text-[#004ACD]" />
-              <div>
+            <div className="flex items-center space-x-2 text-slate-700 min-w-0">
+              <Users className="w-4 h-4 text-[#004ACD] shrink-0" />
+              <div className="min-w-0">
                 <span className="block text-[10px] text-slate-400 font-medium uppercase">Attendance</span>
-                <span className="font-bold text-[#004ACD]">
+                <span className="font-bold text-[#004ACD] block truncate">
                   {attendanceRecords.length} / {scholars.length} ({attendancePercentage}%)
                 </span>
-                <div className="text-[10px] text-slate-500 font-medium flex gap-1.5 mt-0.5">
+                <div className="text-[10px] text-slate-500 font-medium flex gap-1.5 mt-0.5 truncate">
                   <span className="text-emerald-700 font-bold">{signedInOnlyRecords.length} In</span>
                   <span>•</span>
                   <span className="text-cyan-700 font-bold">{signedOutRecords.length} Out</span>
@@ -860,7 +942,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             </div>
 
             {/* Event Status & Quick Action Switch */}
-            <div className="flex items-center space-x-2 text-slate-700">
+            <div className="flex items-center space-x-2 text-slate-700 col-span-2 sm:col-span-1 min-w-0">
               <div className="w-4 h-4 flex items-center justify-center shrink-0">
                 {selectedEvent.status === 'ongoing' ? (
                   <span className="relative flex h-2.5 w-2.5">
@@ -875,7 +957,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
               </div>
               <div className="min-w-0">
                 <span className="block text-[10px] text-slate-400 font-medium uppercase">Event Status</span>
-                <div className="flex items-center space-x-1.5 mt-0.5">
+                <div className="flex items-center space-x-1.5 mt-0.5 flex-wrap gap-1">
                   <span
                     className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
                       selectedEvent.status === 'ongoing'
@@ -1018,29 +1100,11 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center space-x-3 shrink-0">
-                <button
-                  onClick={() => setAudioFeedback(!audioFeedback)}
-                  title={audioFeedback ? 'Sound effects enabled' : 'Sound effects muted'}
-                  className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors flex items-center space-x-1.5 text-xs font-semibold cursor-pointer border border-white/20"
-                >
-                  {audioFeedback ? (
-                    <>
-                      <Volume2 className="w-4 h-4 text-[#00F7FF]" />
-                      <span className="text-[11px] hidden md:inline">Sound On</span>
-                    </>
-                  ) : (
-                    <>
-                      <VolumeX className="w-4 h-4 text-slate-300" />
-                      <span className="text-[11px] hidden md:inline">Muted</span>
-                    </>
-                  )}
-                </button>
-
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full sm:w-auto shrink-0">
                 <button
                   onClick={() => handleUpdateEventStatus('completed')}
                   disabled={isUpdatingStatus}
-                  className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/20 transition-colors cursor-pointer"
+                  className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/20 transition-colors cursor-pointer text-center"
                   title="Mark this event as completed to finalize attendance"
                 >
                   <span>Mark Completed</span>
@@ -1049,7 +1113,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 <button
                   id="launch-qr-scanner-btn"
                   onClick={handleOpenScannerModal}
-                  className="px-5 py-2.5 rounded-xl bg-[#00F7FF] hover:bg-cyan-300 text-slate-900 font-extrabold text-xs shadow-lg shadow-cyan-500/30 transition-all flex items-center space-x-2 cursor-pointer hover:scale-105 active:scale-95"
+                  className="px-5 py-2.5 rounded-xl bg-[#00F7FF] hover:bg-cyan-300 text-slate-900 font-extrabold text-xs shadow-lg shadow-cyan-500/30 transition-all flex items-center justify-center space-x-2 cursor-pointer hover:scale-105 active:scale-95"
                 >
                   <Camera className="w-4 h-4 text-slate-900" />
                   <span>Launch QR Scanner</span>
@@ -1173,22 +1237,32 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
                 <div className="bg-white/60 p-2 rounded-xl border border-black/5">
                   <span className="block text-[10px] text-slate-500 font-medium uppercase">Year & Program</span>
-                  <span className="font-bold text-slate-800 truncate block text-xs">
-                    {latestPersonDisplay.scholar?.year_program || latestPersonDisplay.attendanceRecord.year_program || 'N/A'}
-                  </span>
-                  <span className="block text-[10px] text-slate-400 mt-0.5 truncate">
-                    {latestPersonDisplay.scholar?.academic_program || 'DOST Scholar'}
-                  </span>
+                  {(() => {
+                    const rawYearProg = latestPersonDisplay.scholar?.year_program || latestPersonDisplay.attendanceRecord.year_program || '';
+                    const studentId = latestPersonDisplay.scholar?.student_id || latestPersonDisplay.attendanceRecord.student_id;
+                    const parsed = parseYearProgram(rawYearProg, studentId);
+                    const yearDisplay = formatYearLevelDisplay(latestPersonDisplay.scholar?.year_level || parsed.yearLevel, studentId);
+                    const progDisplay = cleanAcademicProgram(latestPersonDisplay.scholar?.academic_program || parsed.academicProgram);
+                    return (
+                      <div className="mt-0.5 space-y-0.5">
+                        <span className="font-bold text-slate-800 block text-xs">
+                          {yearDisplay}
+                        </span>
+                        <span className="text-slate-700 block text-[11px] font-medium leading-snug break-words">
+                          {progDisplay}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="bg-white/60 p-2 rounded-xl border border-black/5">
                   <span className="block text-[10px] text-slate-500 font-medium uppercase">Latest Action Recorded</span>
-                  <span className="font-bold text-slate-800 block text-xs">
-                    {latestPersonDisplay.action === 'sign_out' ? 'Sign Out Complete' : 'Sign In Active'}
-                  </span>
-                  <span className="block text-[10px] text-slate-500 mt-0.5 truncate">
-                    {latestPersonDisplay.message || 'Updated in live roster'}
-                  </span>
+                  <div className="mt-0.5">
+                    <span className="font-bold text-slate-800 block text-xs">
+                      {latestPersonDisplay.action === 'sign_out' ? 'Sign Out Complete' : 'Sign In Active'}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1223,41 +1297,32 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             {/* Roster Main Header */}
             <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-50/50">
               <div>
-                <h3 className="font-bold text-slate-800 text-sm sm:text-base flex flex-wrap items-center gap-2">
-                  <span>Live Attendance Roster</span>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-[#004ACD] text-[#00F7FF]">
-                    {attendanceRecords.length} Total
-                  </span>
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
-                    {signedInOnlyRecords.length} Signed In
-                  </span>
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-cyan-100 text-cyan-800">
-                    {signedOutRecords.length} Signed Out
-                  </span>
+                <h3 className="font-bold text-slate-800 text-sm sm:text-base">
+                  Live Attendance Roster
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Real-time attendance log for <span className="font-semibold text-slate-700">{selectedEvent.name}</span>
                 </p>
               </div>
 
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                 <button
                   onClick={() => setShowManualLookup(!showManualLookup)}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  className={`flex-1 sm:flex-initial flex items-center justify-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
                     showManualLookup
                       ? 'bg-[#004ACD] text-white shadow-xs'
                       : 'bg-blue-50 text-[#004ACD] border border-blue-200 hover:bg-blue-100'
                   }`}
                 >
-                  <UserCheck className="w-3.5 h-3.5" />
-                  <span>{showManualLookup ? 'Hide Manual Lookup' : 'Manual Lookup'}</span>
+                  <UserCheck className="w-3.5 h-3.5 shrink-0" />
+                  <span>{showManualLookup ? 'Hide Manual' : 'Manual Lookup'}</span>
                 </button>
 
                 <button
                   onClick={() => handleExportCSV(false)}
-                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:border-[#004ACD] text-slate-700 hover:text-[#004ACD] text-xs font-bold shadow-xs transition-colors"
+                  className="flex-1 sm:flex-initial flex items-center justify-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:border-[#004ACD] text-slate-700 hover:text-[#004ACD] text-xs font-bold shadow-xs transition-colors whitespace-nowrap"
                 >
-                  <Download className="w-3.5 h-3.5" />
+                  <Download className="w-3.5 h-3.5 shrink-0" />
                   <span>Export All CSV</span>
                 </button>
               </div>
@@ -1275,7 +1340,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <div className="relative flex-1">
+                  <div className="relative flex-1 min-w-0">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                     <input
                       type="text"
@@ -1297,29 +1362,31 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     )}
                   </div>
 
-                  <select
-                    value={manualStatus}
-                    onChange={(e) => setManualStatus(e.target.value as any)}
-                    className="px-3 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 bg-white"
-                  >
-                    <option value="Present">Present</option>
-                    <option value="Late">Late</option>
-                    <option value="Excused">Excused</option>
-                  </select>
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <select
+                      value={manualStatus}
+                      onChange={(e) => setManualStatus(e.target.value as any)}
+                      className="flex-1 sm:flex-initial px-3 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 bg-white"
+                    >
+                      <option value="Present">Present</option>
+                      <option value="Late">Late</option>
+                      <option value="Excused">Excused</option>
+                    </select>
 
-                  <button
-                    onClick={() => handleManualCheckIn(manualQuery)}
-                    disabled={!manualQuery.trim() || isManualSubmitting || selectedEvent.status !== 'ongoing'}
-                    title={
-                      selectedEvent.status !== 'ongoing'
-                        ? `Attendance is unavailable because the event is ${selectedEvent.status}.`
-                        : undefined
-                    }
-                    className="px-5 py-2 rounded-xl bg-[#004ACD] hover:bg-[#0165CB] text-white text-xs font-bold disabled:bg-slate-200 disabled:text-slate-400 transition-colors shrink-0 flex items-center justify-center space-x-1.5 cursor-pointer disabled:cursor-not-allowed"
-                  >
-                    <UserCheck className="w-3.5 h-3.5" />
-                    <span>Check In</span>
-                  </button>
+                    <button
+                      onClick={() => handleManualCheckIn(manualQuery)}
+                      disabled={!manualQuery.trim() || isManualSubmitting || selectedEvent.status !== 'ongoing'}
+                      title={
+                        selectedEvent.status !== 'ongoing'
+                          ? `Attendance is unavailable because the event is ${selectedEvent.status}.`
+                          : undefined
+                      }
+                      className="flex-1 sm:flex-initial px-5 py-2 rounded-xl bg-[#004ACD] hover:bg-[#0165CB] text-white text-xs font-bold disabled:bg-slate-200 disabled:text-slate-400 transition-colors shrink-0 flex items-center justify-center space-x-1.5 cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
+                    >
+                      <UserCheck className="w-3.5 h-3.5" />
+                      <span>Check In</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Event Status Warning for Manual Entry */}
@@ -1481,16 +1548,16 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             )}
 
             {/* Roster Tabs & Search Filter */}
-            <div className="p-4 border-b border-slate-100 flex flex-col gap-3">
+            <div className="p-4 border-b border-slate-100 flex flex-col gap-3 overflow-hidden">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+                <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold overflow-x-auto max-w-full scrollbar-none shrink-0">
                   <button
                     onClick={() => {
                       setRosterTab('checked');
                       setSelectedRecordIds(new Set());
                       setSelectedAbsentIds(new Set());
                     }}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                    className={`px-3 py-1.5 rounded-lg transition-all whitespace-nowrap shrink-0 ${
                       rosterTab === 'checked'
                         ? 'bg-white text-[#004ACD] shadow-xs'
                         : 'text-slate-600 hover:text-slate-900'
@@ -1504,7 +1571,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       setSelectedRecordIds(new Set());
                       setSelectedAbsentIds(new Set());
                     }}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${
+                    className={`px-3 py-1.5 rounded-lg transition-all whitespace-nowrap shrink-0 ${
                       rosterTab === 'absent'
                         ? 'bg-white text-rose-600 shadow-xs'
                         : 'text-slate-600 hover:text-slate-900'
@@ -1514,7 +1581,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   </button>
                 </div>
 
-                <div className="relative flex-1 sm:max-w-xs">
+                <div className="relative flex-1 sm:max-w-xs w-full">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                   <input
                     type="text"
@@ -1528,12 +1595,12 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
               {/* Sub-filter tabs when in Attended tab */}
               {rosterTab === 'checked' && (
-                <div className="flex items-center gap-2 pt-1 border-t border-slate-100/80 text-[11px]">
-                  <span className="text-slate-400 font-medium">Filter:</span>
-                  <div className="inline-flex rounded-lg bg-slate-100 p-0.5 font-medium">
+                <div className="flex items-center gap-2 pt-1 border-t border-slate-100/80 text-[11px] overflow-hidden">
+                  <span className="text-slate-400 font-medium shrink-0">Filter:</span>
+                  <div className="inline-flex rounded-lg bg-slate-100 p-0.5 font-medium overflow-x-auto max-w-full scrollbar-none">
                     <button
                       onClick={() => setCheckedSubFilter('all')}
-                      className={`px-2.5 py-1 rounded-md transition-all ${
+                      className={`px-2.5 py-1 rounded-md transition-all whitespace-nowrap shrink-0 ${
                         checkedSubFilter === 'all'
                           ? 'bg-white text-slate-900 font-bold shadow-2xs'
                           : 'text-slate-600 hover:text-slate-900'
@@ -1543,7 +1610,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     </button>
                     <button
                       onClick={() => setCheckedSubFilter('signed_in')}
-                      className={`px-2.5 py-1 rounded-md transition-all flex items-center space-x-1 ${
+                      className={`px-2.5 py-1 rounded-md transition-all flex items-center space-x-1 whitespace-nowrap shrink-0 ${
                         checkedSubFilter === 'signed_in'
                           ? 'bg-white text-emerald-700 font-bold shadow-2xs'
                           : 'text-slate-600 hover:text-slate-900'
@@ -1554,7 +1621,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     </button>
                     <button
                       onClick={() => setCheckedSubFilter('signed_out')}
-                      className={`px-2.5 py-1 rounded-md transition-all flex items-center space-x-1 ${
+                      className={`px-2.5 py-1 rounded-md transition-all flex items-center space-x-1 whitespace-nowrap shrink-0 ${
                         checkedSubFilter === 'signed_out'
                           ? 'bg-white text-cyan-700 font-bold shadow-2xs'
                           : 'text-slate-600 hover:text-slate-900'
@@ -1569,7 +1636,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             </div>
 
             {/* Roster Table Content */}
-            <div className="max-h-[480px] overflow-y-auto min-h-[260px]">
+            <div className="max-h-[480px] overflow-y-auto overflow-x-auto min-h-[260px] w-full">
               {rosterTab === 'checked' ? (
                 filteredChecked.length === 0 ? (
                   <div className="py-16 text-center text-slate-400 text-xs">
@@ -1902,25 +1969,6 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
             {/* Right: Controls & Guaranteed-Visible Closable X Button */}
             <div className="flex items-center space-x-1.5 sm:space-x-2.5 shrink-0">
-              {/* Sound Toggle Button */}
-              <button
-                onClick={() => setAudioFeedback(!audioFeedback)}
-                title={audioFeedback ? 'Sound effects enabled' : 'Sound effects muted'}
-                className="w-8 h-8 sm:w-auto sm:px-3 sm:py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors flex items-center justify-center space-x-1.5 text-xs font-semibold cursor-pointer shrink-0 border border-white/10"
-              >
-                {audioFeedback ? (
-                  <>
-                    <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#00F7FF]" />
-                    <span className="text-[11px] hidden md:inline">Sound</span>
-                  </>
-                ) : (
-                  <>
-                    <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-                    <span className="text-[11px] hidden md:inline">Muted</span>
-                  </>
-                )}
-              </button>
-
               {/* Flip Camera Button */}
               <button
                 onClick={toggleCameraFacing}
@@ -1959,108 +2007,129 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   </span>
                 </div>
               )}
+            </div>
 
-              {/* Feedback Response Popup Overlay: Acknowledges student QR successfully scanned before auto-closing */}
-              {scanSuccessFeedback && (
-                <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in zoom-in-95 duration-200">
+            {/* Feedback Response Popup Overlay: Full overlay unconstrained by camera viewfinder so it NEVER cuts off on mobile */}
+            {scanSuccessFeedback && (
+              <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in zoom-in-95 duration-200">
+                <div
+                  className={`bg-slate-900 border-2 rounded-2xl sm:rounded-3xl p-4 sm:p-5 max-w-xs sm:max-w-md w-full shadow-2xl text-center space-y-2.5 sm:space-y-3 relative my-auto max-h-[92vh] overflow-y-auto ${
+                    scanSuccessFeedback.action === 'sign_out'
+                      ? 'border-cyan-400'
+                      : 'border-emerald-500'
+                  }`}
+                >
+                  {/* Dismiss X button */}
+                  <button
+                    type="button"
+                    id="dismiss-scan-feedback-btn"
+                    onClick={handleDismissScanFeedback}
+                    className="absolute top-2.5 right-2.5 sm:top-3.5 sm:right-3.5 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer z-10"
+                    title="Dismiss feedback and scan next"
+                    aria-label="Dismiss feedback"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+
+                  {/* Atmospheric ambient glow */}
+                  <div className="absolute -top-16 -right-16 w-32 h-32 bg-[#00F7FF]/20 rounded-full blur-2xl pointer-events-none"></div>
+                  <div className="absolute -bottom-16 -left-16 w-32 h-32 bg-[#004ACD]/25 rounded-full blur-2xl pointer-events-none"></div>
+
                   <div
-                    className={`bg-slate-900 border-2 rounded-2xl sm:rounded-3xl p-4 sm:p-6 max-w-xs sm:max-w-md w-full shadow-2xl text-center space-y-2.5 sm:space-y-3 relative overflow-hidden ${
+                    className={`w-12 h-12 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center mx-auto shadow-lg shrink-0 ${
                       scanSuccessFeedback.action === 'sign_out'
-                        ? 'border-cyan-400'
-                        : 'border-emerald-500'
+                        ? 'bg-gradient-to-tr from-[#004ACD] to-[#00F7FF] text-white shadow-cyan-500/30'
+                        : 'bg-gradient-to-tr from-emerald-600 to-emerald-400 text-white shadow-emerald-500/30'
                     }`}
                   >
-                    {/* Atmospheric ambient glow */}
-                    <div className="absolute -top-16 -right-16 w-32 h-32 bg-[#00F7FF]/20 rounded-full blur-2xl pointer-events-none"></div>
-                    <div className="absolute -bottom-16 -left-16 w-32 h-32 bg-[#004ACD]/25 rounded-full blur-2xl pointer-events-none"></div>
+                    {scanSuccessFeedback.action === 'sign_out' ? (
+                      <LogOut className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
+                    ) : (
+                      <LogIn className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
+                    )}
+                  </div>
 
-                    <div
-                      className={`w-14 h-14 sm:w-18 sm:h-18 rounded-2xl flex items-center justify-center mx-auto shadow-lg ${
+                  <div className="space-y-1">
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold border inline-block ${
                         scanSuccessFeedback.action === 'sign_out'
-                          ? 'bg-gradient-to-tr from-[#004ACD] to-[#00F7FF] text-white shadow-cyan-500/30'
-                          : 'bg-gradient-to-tr from-emerald-600 to-emerald-400 text-white shadow-emerald-500/30'
+                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
+                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
                       }`}
                     >
-                      {scanSuccessFeedback.action === 'sign_out' ? (
-                        <LogOut className="w-7 h-7 sm:w-10 sm:h-10 text-white" />
-                      ) : (
-                        <LogIn className="w-7 h-7 sm:w-10 sm:h-10 text-white" />
-                      )}
-                    </div>
+                      {scanSuccessFeedback.action === 'sign_out'
+                        ? '2nd Scan: Sign-Out Recorded!'
+                        : '1st Scan: Sign-In Recorded!'}
+                    </span>
+                    <h4 className="text-base sm:text-xl font-black text-white tracking-tight">
+                      {scanSuccessFeedback.action === 'sign_out'
+                        ? 'Sign-Out Confirmed'
+                        : 'Sign-In Confirmed'}
+                    </h4>
 
-                    <div className="space-y-1">
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold border inline-block ${
-                          scanSuccessFeedback.action === 'sign_out'
-                            ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
-                            : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                        }`}
-                      >
-                        {scanSuccessFeedback.action === 'sign_out'
-                          ? '2nd Scan: Sign-Out Recorded!'
-                          : '1st Scan: Sign-In Recorded!'}
-                      </span>
-                      <h4 className="text-lg sm:text-2xl font-black text-white tracking-tight">
-                        {scanSuccessFeedback.action === 'sign_out'
-                          ? 'Sign-Out Confirmed'
-                          : 'Sign-In Confirmed'}
-                      </h4>
+                    {scanSuccessFeedback.scholar ? (
+                      <div className="mt-2 bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 text-center space-y-1">
+                        <div className="text-sm sm:text-base font-extrabold text-white leading-tight">
+                          {formatScholarName(scanSuccessFeedback.scholar)}
+                        </div>
+                        <div className="text-[11px] sm:text-xs text-[#00F7FF] font-bold">
+                          {scanSuccessFeedback.scholar.student_id} • {resolveScholarScholarshipType(scanSuccessFeedback.scholar)}
+                        </div>
+                        <div className="text-[10px] sm:text-[11px] text-slate-300 truncate">
+                          {scanSuccessFeedback.scholar.college} • {scanSuccessFeedback.scholar.year_program}
+                        </div>
 
-                      {scanSuccessFeedback.scholar ? (
-                        <div className="mt-2 bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl p-3 sm:p-3.5 text-center space-y-1">
-                          <div className="text-sm sm:text-base font-extrabold text-white">
-                            {formatScholarName(scanSuccessFeedback.scholar)}
+                        {/* Timestamps strip */}
+                        <div className="mt-2 pt-2 border-t border-white/10 grid grid-cols-2 gap-2 text-left">
+                          <div className="bg-white/5 rounded-lg p-1.5 px-2">
+                            <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-semibold">
+                              Sign In
+                            </span>
+                            <span className="text-xs font-bold text-emerald-300">
+                              {scanSuccessFeedback.attendanceRecord?.sign_in_time
+                                ? new Date(scanSuccessFeedback.attendanceRecord.sign_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                                : scanSuccessFeedback.attendanceRecord?.timestamp
+                                ? new Date(scanSuccessFeedback.attendanceRecord.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                                : 'Recorded'}
+                            </span>
                           </div>
-                          <div className="text-[11px] sm:text-xs text-[#00F7FF] font-bold">
-                            {scanSuccessFeedback.scholar.student_id} • {resolveScholarScholarshipType(scanSuccessFeedback.scholar)}
-                          </div>
-                          <div className="text-[10px] sm:text-[11px] text-slate-300 truncate">
-                            {scanSuccessFeedback.scholar.college} • {scanSuccessFeedback.scholar.year_program}
-                          </div>
-
-                          {/* Timestamps strip */}
-                          <div className="mt-2 pt-2 border-t border-white/10 grid grid-cols-2 gap-2 text-left">
-                            <div className="bg-white/5 rounded-lg p-1.5 px-2">
-                              <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-semibold">
-                                Sign In
-                              </span>
-                              <span className="text-xs font-bold text-emerald-300">
-                                {scanSuccessFeedback.attendanceRecord?.sign_in_time
-                                  ? new Date(scanSuccessFeedback.attendanceRecord.sign_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                                  : scanSuccessFeedback.attendanceRecord?.timestamp
-                                  ? new Date(scanSuccessFeedback.attendanceRecord.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                                  : 'Recorded'}
-                              </span>
-                            </div>
-                            <div className="bg-white/5 rounded-lg p-1.5 px-2">
-                              <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-semibold">
-                                Sign Out
-                              </span>
-                              <span className={`text-xs font-bold ${scanSuccessFeedback.action === 'sign_out' ? 'text-cyan-300' : 'text-slate-400 italic'}`}>
-                                {scanSuccessFeedback.attendanceRecord?.sign_out_time
-                                  ? new Date(scanSuccessFeedback.attendanceRecord.sign_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                                  : 'Pending 2nd scan'}
-                              </span>
-                            </div>
+                          <div className="bg-white/5 rounded-lg p-1.5 px-2">
+                            <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-semibold">
+                              Sign Out
+                            </span>
+                            <span className={`text-xs font-bold ${scanSuccessFeedback.action === 'sign_out' ? 'text-cyan-300' : 'text-slate-400 italic'}`}>
+                              {scanSuccessFeedback.attendanceRecord?.sign_out_time
+                                ? new Date(scanSuccessFeedback.attendanceRecord.sign_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                                : 'Pending 2nd scan'}
+                            </span>
                           </div>
                         </div>
-                      ) : (
-                        <p className="text-xs sm:text-sm text-slate-300 mt-2">{scanSuccessFeedback.message}</p>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <p className="text-xs sm:text-sm text-slate-300 mt-2">{scanSuccessFeedback.message}</p>
+                    )}
+                  </div>
 
-                    <div className="pt-1 flex items-center justify-center space-x-2 text-[10px] sm:text-xs text-slate-300 font-semibold">
-                      <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[#00F7FF] animate-ping"></span>
-                      <span>
-                        {scanSuccessFeedback.action === 'sign_out'
-                          ? 'Sign-out recorded • Closing scanner...'
-                          : 'Sign-in saved • Closing scanner...'}
-                      </span>
+                  {/* Immediate next scan & status */}
+                  <div className="pt-1 space-y-2">
+                    <button
+                      type="button"
+                      id="scan-next-scholar-btn"
+                      onClick={handleDismissScanFeedback}
+                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#004ACD] to-[#0165CB] hover:from-[#0165CB] hover:to-[#004ACD] text-white text-xs sm:text-sm font-bold shadow-md shadow-blue-500/25 transition-all flex items-center justify-center space-x-2 cursor-pointer active:scale-98"
+                    >
+                      <QrCode className="w-4 h-4 text-[#00F7FF]" />
+                      <span>Scan Next Scholar</span>
+                    </button>
+
+                    <div className="flex items-center justify-center space-x-1.5 text-[10px] sm:text-xs text-slate-400 font-medium">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span>Scanner remains active • Auto-resumes in 3s</span>
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Error Message if camera failed */}
             {scannerError && (
@@ -2190,6 +2259,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         onClose={() => {
           if (!isBatchDeleting) setShowBatchDeleteModal(false);
         }}
+      />
+
+      {/* Gawad Isko Certificate & Congratulations Modal */}
+      <GawadIskoCertModal
+        isOpen={Boolean(gawadIskoPromptScholar)}
+        scholar={gawadIskoPromptScholar}
+        onProceed={handleProceedGawadIsko}
       />
     </div>
   );

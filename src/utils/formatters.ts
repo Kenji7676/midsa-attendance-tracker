@@ -176,14 +176,93 @@ function extractFirstAndMiddle(
 }
 
 /**
- * Formats Year Level (1-5) and Academic Program into standard string
- * e.g. Year 1 - BS Computer Science
+ * Normalizes any year level input ("1", "1st", "1st Year", "Year 1", "1st Yearth Year", 1)
+ * into a single clean digit string: "1", "2", "3", "4", or "5".
  */
-export function formatYearProgram(yearLevel: string | number, academicProgram: string): string {
-  const rawY = String(yearLevel || '1').trim();
-  const digitMatch = rawY.match(/\b([1-5])\b/) || rawY.match(/([1-5])/);
-  const yNum = digitMatch ? digitMatch[1] : (rawY || '1');
-  const prog = (academicProgram || '').replace(/^(?:[1-5](?:st|nd|rd|th)?\s*Year\s*-\s*)+/gi, '').trim() || 'BS Computer Science';
+export function normalizeYearLevel(rawYear: string | number | null | undefined, studentId?: string): string {
+  if (rawYear !== null && rawYear !== undefined) {
+    const str = String(rawYear).trim();
+    if (str) {
+      // Look for digit 1-5 with optional ordinal (1st, 2nd, 3rd, 4th, 5th, or just 1, 2, 3, 4, 5)
+      const match = str.match(/\b([1-5])(?:st|nd|rd|th)?\b/i) || str.match(/\b([1-5])\b/) || str.match(/([1-5])/);
+      if (match) {
+        return match[1];
+      }
+      // Word numbers
+      if (/first|freshman/i.test(str)) return '1';
+      if (/second|sophomore/i.test(str)) return '2';
+      if (/third|junior/i.test(str)) return '3';
+      if (/fourth|senior/i.test(str)) return '4';
+      if (/fifth/i.test(str)) return '5';
+    }
+  }
+
+  // Deduce from student ID prefix if provided (e.g. 2023-xxxx -> 4, 2024-xxxx -> 3, 2025-xxxx -> 2, 2026-xxxx -> 1)
+  if (studentId) {
+    const sId = String(studentId).trim();
+    if (sId.startsWith('2023-')) return '4';
+    if (sId.startsWith('2024-')) return '3';
+    if (sId.startsWith('2025-')) return '2';
+    if (sId.startsWith('2026-')) return '1';
+  }
+
+  return '1';
+}
+
+/**
+ * Returns clean display string for year level: e.g. "1st Year", "2nd Year", "3rd Year", "4th Year", "5th Year"
+ */
+export function formatYearLevelDisplay(rawYear: string | number | null | undefined, studentId?: string): string {
+  const y = normalizeYearLevel(rawYear, studentId);
+  const suffix = y === '1' ? '1st' : y === '2' ? '2nd' : y === '3' ? '3rd' : `${y}th`;
+  return `${suffix} Year`;
+}
+
+/**
+ * Strips any stray year prefixes like "1st Year - ", "1st Yearth Year - ", "1st Year ", "Year 1 - ", etc.
+ * and trims known programs properly (including preserving BS Biology (Biodiversity), etc.)
+ */
+export function cleanAcademicProgram(rawProgram: string | null | undefined): string {
+  if (!rawProgram) return 'BS Computer Science';
+  let prog = String(rawProgram).trim();
+
+  // Strip repeated year indicators like "1st Year", "1st Yearth Year", "Year 1", etc. with or without dashes/colons
+  prog = prog
+    .replace(/^(?:(?:[1-5](?:st|nd|rd|th)?\s*Year(?:th\s*Year)?)|(?:Year\s*[1-5])|(?:[1-5](?:st|nd|rd|th)?))\s*[-–—:]*\s*/gi, '')
+    .replace(/^(?:(?:[1-5](?:st|nd|rd|th)?\s*Year(?:th\s*Year)?)|(?:Year\s*[1-5])|(?:[1-5](?:st|nd|rd|th)?))\s*[-–—:]*\s*/gi, '')
+    .trim();
+
+  // Ensure specific Biology sub-majors are accurately recognized and not cut short
+  const lower = prog.toLowerCase();
+  if (lower.includes('biodiversity')) {
+    return 'BS Biology (Biodiversity)';
+  }
+  if (lower.includes('microbiology')) {
+    return 'BS Biology (Microbiology)';
+  }
+  if (lower.includes('animal biology')) {
+    return 'BS Biology (Animal Biology)';
+  }
+  if (lower.includes('plant biology')) {
+    return 'BS Biology (Plant Biology)';
+  }
+  if (lower.includes('marine biology')) {
+    return 'BS Marine Biology';
+  }
+
+  // Remove any remaining stray Yearth Year fragments if any slipped in
+  prog = prog.replace(/\b[1-5](?:st|nd|rd|th)?\s*Year(?:th\s*Year)?\b/gi, '').replace(/^[-–—:\s]+/, '').trim();
+
+  return prog || 'BS Computer Science';
+}
+
+/**
+ * Formats Year Level (1-5) and Academic Program into standard string
+ * e.g. Year 1 - BS Computer Science -> 1st Year - BS Computer Science
+ */
+export function formatYearProgram(yearLevel: string | number | null | undefined, academicProgram: string, studentId?: string): string {
+  const yNum = normalizeYearLevel(yearLevel, studentId);
+  const prog = cleanAcademicProgram(academicProgram);
   const suffix = yNum === '1' ? '1st' : yNum === '2' ? '2nd' : yNum === '3' ? '3rd' : `${yNum}th`;
   return `${suffix} Year - ${prog}`;
 }
@@ -191,25 +270,29 @@ export function formatYearProgram(yearLevel: string | number, academicProgram: s
 /**
  * Extracts year level (1-5) and program text from year_program
  */
-export function parseYearProgram(raw: string): { yearLevel: string; academicProgram: string } {
-  if (!raw) return { yearLevel: '1', academicProgram: 'BS Computer Science' };
+export function parseYearProgram(raw: string, studentId?: string): { yearLevel: string; academicProgram: string } {
+  if (!raw) return { yearLevel: normalizeYearLevel(null, studentId), academicProgram: 'BS Computer Science' };
 
-  // Match e.g. "3rd Year - BS Computer Science" or "Year 3 - BS Computer Science" or "3 - BS Computer Science"
-  const match = raw.match(/^(?:(?:([1-5])(?:st|nd|rd|th)?\s*Year)|(?:Year\s*([1-5]))|([1-5]))\s*(?:-\s*|\s*,\s*|\s+)(.*)$/i);
+  // Match e.g. "3rd Year - BS Computer Science" or "3rd Yearth Year - BS Computer Science" or "Year 3 - BS Computer Science" or "3 - BS Computer Science"
+  const cleaned = String(raw).trim();
+  const match = cleaned.match(/^(?:(?:([1-5])(?:st|nd|rd|th)?\s*Year(?:th\s*Year)?)|(?:Year\s*([1-5]))|([1-5]))\s*(?:[-–—:]*\s*|\s+)(.*)$/i);
   if (match) {
     const yearLevel = match[1] || match[2] || match[3] || '1';
-    const academicProgram = (match[4] || '').trim();
-    return { yearLevel, academicProgram: academicProgram || 'BS Computer Science' };
+    const rawAcademic = (match[4] || '').trim();
+    return {
+      yearLevel: normalizeYearLevel(yearLevel, studentId),
+      academicProgram: cleanAcademicProgram(rawAcademic) || 'BS Computer Science',
+    };
   }
 
   // Fallback: search for any digit 1-5
-  const digitMatch = raw.match(/\b([1-5])\b/);
-  const yearLevel = digitMatch ? digitMatch[1] : '1';
-  const cleanProg = raw.replace(/\b[1-5](?:st|nd|rd|th)?\s*Year\b/gi, '').replace(/^[\s-]+/, '').trim();
+  const digitMatch = cleaned.match(/\b([1-5])\b/);
+  const yearLevel = digitMatch ? digitMatch[1] : normalizeYearLevel(null, studentId);
+  const cleanProg = cleanAcademicProgram(cleaned);
 
   return {
-    yearLevel,
-    academicProgram: cleanProg || raw || 'BS Computer Science',
+    yearLevel: normalizeYearLevel(yearLevel, studentId),
+    academicProgram: cleanProg || 'BS Computer Science',
   };
 }
 
@@ -435,10 +518,7 @@ export const EMAIL_PERSONALIZATION_TOKENS: EmailTokenDef[] = [
     label: 'Year Level',
     category: 'academic',
     description: 'Academic standing with suffix (e.g. 3rd Year)',
-    example: (s) => {
-      const y = s?.year_level || (s?.year_program ? parseYearProgram(s.year_program).yearLevel : '3');
-      return y === '1' ? '1st Year' : y === '2' ? '2nd Year' : y === '3' ? '3rd Year' : `${y}th Year`;
-    },
+    example: (s) => formatYearLevelDisplay(s?.year_level, s?.student_id),
   },
   {
     tag: '{{college}}',
@@ -504,23 +584,18 @@ export function personalizeEmailTemplate(template: string, scholar?: any): strin
   const qrCode = (scholar.qr_code || '').trim();
   const scholarshipType = resolveScholarScholarshipType(scholar);
 
-  let yearNum = (scholar.year_level || '').trim();
-  let academicProg = (scholar.academic_program || '').trim();
+  let yearNum = normalizeYearLevel(scholar.year_level, studentId);
+  let academicProg = cleanAcademicProgram(scholar.academic_program);
   let yearProgram = (scholar.year_program || '').trim();
 
-  if (!academicProg || !yearNum) {
-    const parsedProg = parseYearProgram(yearProgram);
-    if (!yearNum) yearNum = parsedProg.yearLevel;
+  if (!academicProg || !scholar.year_level) {
+    const parsedProg = parseYearProgram(yearProgram, studentId);
+    if (!scholar.year_level) yearNum = parsedProg.yearLevel;
     if (!academicProg) academicProg = parsedProg.academicProgram;
   }
 
-  if (!yearProgram && (yearNum || academicProg)) {
-    yearProgram = formatYearProgram(yearNum || '1', academicProg || 'BS Computer Science');
-  }
-
-  const yearLevelLabel = yearNum
-    ? (yearNum === '1' ? '1st Year' : yearNum === '2' ? '2nd Year' : yearNum === '3' ? '3rd Year' : `${yearNum}th Year`)
-    : '';
+  yearProgram = formatYearProgram(yearNum, academicProg, studentId);
+  const yearLevelLabel = formatYearLevelDisplay(yearNum, studentId);
 
   return template
     .replace(/\{\{(?:name|full_name|scholar_name)\}\}/gi, formattedName)
@@ -531,8 +606,8 @@ export function personalizeEmailTemplate(template: string, scholar?: any): strin
     .replace(/\{\{(?:scholarship_type|scholarship|scholarship_program|scholarship_category)\}\}/gi, scholarshipType)
     .replace(/\{\{(?:program|year_program)\}\}/gi, yearProgram)
     .replace(/\{\{(?:academic_program|degree|course)\}\}/gi, academicProg)
-    .replace(/\{\{year_level\}\}/gi, yearLevelLabel || yearNum)
-    .replace(/\{\{year\}\}/gi, yearLevelLabel || yearNum)
+    .replace(/\{\{year_level\}\}/gi, yearLevelLabel)
+    .replace(/\{\{year\}\}/gi, yearLevelLabel)
     .replace(/\{\{year_num\}\}/gi, yearNum)
     .replace(/\{\{(?:college|department)\}\}/gi, college)
     .replace(/\{\{email\}\}/gi, email)

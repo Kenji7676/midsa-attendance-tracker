@@ -16,6 +16,7 @@ import { CsvUploadModal } from './components/CsvUploadModal';
 import { EventModal } from './components/EventModal';
 import { ScholarModal } from './components/ScholarModal';
 import { BatchEmailModal } from './components/BatchEmailModal';
+import { realtimeSync } from './services/realtime';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 export default function App() {
@@ -62,6 +63,15 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+
+    // Auto-sync data whenever any device (phone, tablet, laptop) updates attendance, scholars, or events
+    const unsubscribe = realtimeSync.subscribe(() => {
+      loadData();
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [loadData]);
 
   // Handlers for Event operations

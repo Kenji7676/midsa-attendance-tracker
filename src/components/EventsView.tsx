@@ -101,7 +101,7 @@ export const EventsView: React.FC<EventsViewProps> = ({
         return;
       }
 
-      const headers = ['Student ID', 'Name', 'College', 'Program', 'Time', 'Method', 'Status'];
+      const headers = ['Student ID', 'Name', 'College', 'Year & Program', 'Time', 'Method', 'Status'];
       const rows = records.map((r) => [
         `"${r.student_id}"`,
         `"${formatScholarName(r.scholar_name || '')}"`,
@@ -151,8 +151,8 @@ export const EventsView: React.FC<EventsViewProps> = ({
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="relative w-full sm:max-w-md">
+      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 overflow-hidden">
+        <div className="relative w-full md:max-w-md">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
           <input
             type="text"
@@ -163,15 +163,15 @@ export const EventsView: React.FC<EventsViewProps> = ({
           />
         </div>
 
-        {/* Status Filter Buttons */}
-        <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold self-stretch sm:self-auto justify-center">
+        {/* Status Filter Buttons - 2x2 grid on mobile, row on sm+ */}
+        <div className="grid grid-cols-2 sm:flex sm:items-center gap-1 sm:space-x-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold w-full sm:w-auto shrink-0">
           {(['all', 'ongoing', 'upcoming', 'completed'] as const).map((st) => (
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
-              className={`px-3 py-1.5 rounded-lg capitalize transition-all ${
+              className={`px-3 py-1.5 rounded-lg capitalize transition-all whitespace-nowrap text-center ${
                 statusFilter === st
-                  ? 'bg-white text-[#004ACD] shadow-xs'
+                  ? 'bg-white text-[#004ACD] shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >

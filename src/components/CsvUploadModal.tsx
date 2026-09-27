@@ -10,6 +10,8 @@ import {
   parseYearProgram,
   formatScholarshipType,
   parseScholarshipType,
+  normalizeYearLevel,
+  cleanAcademicProgram,
 } from '../utils/formatters';
 
 interface CsvUploadModalProps {
@@ -32,6 +34,7 @@ interface ParsedScholarRow {
   scholarship_subcategory: ScholarshipSubcategory;
   scholarship_type: string;
   email: string;
+  gawad_isko_awardee?: 'yes' | 'no';
   valid: boolean;
   error?: string;
 }
@@ -49,11 +52,11 @@ export const CsvUploadModal: React.FC<CsvUploadModalProps> = ({ isOpen, onClose,
 
   const handleDownloadTemplate = () => {
     const csvContent =
-      'Student ID,Surname,First Name,M.I.,Year,Academic Program,College,Scholarship Type,Email Address\n' +
-      '2024-0001,La Cruz,Juan,D.,3rd Year,BS Computer Science,College of Computer Studies,RA 7687,juan.lacruz@g.msuiit.edu.ph\n' +
-      '2024-0002,Santos,Maria Clara,L.,2nd Year,BS Information Technology,College of Computer Studies,JLSS (MERIT),maria.santos@midsa.org\n' +
-      '2023-0003,Reyes,Angela Nicole,M.,1st Year,BS Computer Engineering,College of Engineering,MOST,angela.reyes@midsa.org\n' +
-      '2025-0004,Gomez,Rafael Mateo,P.,4th Year,BS Mathematics,College of Science and Mathematics,JLSS (RA 10612),rafael.gomez@midsa.org\n';
+      'Student ID,Surname,First Name,M.I.,Year,Academic Program,College,Scholarship Type,Email Address,Gawad Isko Awardee\n' +
+      '2024-0001,La Cruz,Juan,D.,3rd Year,BS Computer Science,College of Computer Studies,RA 7687,juan.lacruz@g.msuiit.edu.ph,yes\n' +
+      '2024-0002,Santos,Maria Clara,L.,2nd Year,BS Information Technology,College of Computer Studies,JLSS (MERIT),maria.santos@midsa.org,no\n' +
+      '2023-0003,Reyes,Angela Nicole,M.,1st Year,BS Computer Engineering,College of Engineering,MOST,angela.reyes@midsa.org,yes\n' +
+      '2025-0004,Gomez,Rafael Mateo,P.,4th Year,BS Mathematics,College of Science and Mathematics,JLSS (RA 10612),rafael.gomez@midsa.org,no\n';
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -106,22 +109,30 @@ export const CsvUploadModal: React.FC<CsvUploadModalProps> = ({ isOpen, onClose,
           });
 
           // Year and Academic Program parsing
-          let yearLevel = (row['Year'] || row['Year Level'] || row['year_level'] || row['year'] || row['yearLevel'] || '').toString().trim();
-          let academicProgram = (row['Academic Program'] || row['Program'] || row['academic_program'] || row['academicProgram'] || row['Course'] || '').toString().trim();
+          const rawYear = (row['Year'] || row['Year Level'] || row['year_level'] || row['year'] || row['yearLevel'] || '').toString().trim();
+          const rawProg = (row['Academic Program'] || row['Program'] || row['academic_program'] || row['academicProgram'] || row['Course'] || '').toString().trim();
           const legacyYearProgram = (row['Year/Program'] || row['year_program'] || '').toString().trim();
 
-          if (!yearLevel || !academicProgram) {
-            if (legacyYearProgram) {
-              const parsedYp = parseYearProgram(legacyYearProgram);
-              yearLevel = parsedYp.yearLevel;
+          let yearLevel = rawYear ? normalizeYearLevel(rawYear, student_id) : '';
+          let academicProgram = cleanAcademicProgram(rawProg);
+
+          if (!rawYear && legacyYearProgram) {
+            const parsedYp = parseYearProgram(legacyYearProgram, student_id);
+            yearLevel = parsedYp.yearLevel;
+            if (!rawProg) {
               academicProgram = parsedYp.academicProgram;
-            } else {
-              yearLevel = yearLevel || '1';
-              academicProgram = academicProgram || 'BS Computer Science';
             }
           }
 
-          const formattedYearProgram = formatYearProgram(yearLevel, academicProgram);
+          if (!yearLevel) {
+            yearLevel = normalizeYearLevel(null, student_id);
+          }
+
+          if (!rawProg && !legacyYearProgram) {
+            academicProgram = 'BS Computer Science';
+          }
+
+          const formattedYearProgram = formatYearProgram(yearLevel, academicProgram, student_id);
           const college = (row['College'] || row['Department'] || row['college'] || 'College of Computer Studies').toString().trim();
           const email = (row['Email Address'] || row['Email'] || row['email'] || `${student_id.toLowerCase()}@g.msuiit.edu.ph`).toString().trim();
 
@@ -141,6 +152,16 @@ export const CsvUploadModal: React.FC<CsvUploadModalProps> = ({ isOpen, onClose,
           const schCat = (row.scholarship_category || parsedSt.category) as ScholarshipCategory;
           const schSub = (row.scholarship_subcategory !== undefined ? row.scholarship_subcategory : parsedSt.subcategory) as ScholarshipSubcategory;
           const schType = formatScholarshipType(schCat, schSub);
+
+          const rawAwardee = (
+            row['Gawad Isko Awardee'] ||
+            row['Gawad Isko Awardee?'] ||
+            row['Gawad Isko'] ||
+            row['gawad_isko_awardee'] ||
+            row['gawad_isko'] ||
+            ''
+          ).toString().trim().toLowerCase();
+          const schAwardee: 'yes' | 'no' = ['yes', 'y', 'true', '1'].includes(rawAwardee) ? 'yes' : 'no';
 
           const isFormatValid = /^\d{4}-\d{4}$/.test(student_id);
 
@@ -168,6 +189,7 @@ export const CsvUploadModal: React.FC<CsvUploadModalProps> = ({ isOpen, onClose,
             scholarship_subcategory: schSub,
             scholarship_type: schType,
             email,
+            gawad_isko_awardee: schAwardee,
             valid,
             error,
           });
@@ -334,7 +356,7 @@ export const CsvUploadModal: React.FC<CsvUploadModalProps> = ({ isOpen, onClose,
                         <tr>
                           <th className="py-2 px-3">Student ID</th>
                           <th className="py-2 px-3">Name</th>
-                          <th className="py-2 px-3">Program</th>
+                          <th className="py-2 px-3">Year & Program</th>
                           <th className="py-2 px-3">Scholarship</th>
                           <th className="py-2 px-3">Status</th>
                         </tr>

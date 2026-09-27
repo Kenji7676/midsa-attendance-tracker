@@ -7,6 +7,9 @@ import {
   getFirstNameInitials,
   resolveScholarScholarshipType,
   parseYearProgram,
+  normalizeYearLevel,
+  formatYearLevelDisplay,
+  cleanAcademicProgram,
   DEFAULT_MSUIIT_COLLEGES,
 } from '../utils/formatters';
 import {
@@ -33,6 +36,10 @@ import {
   Pencil,
   ArrowUp,
   ArrowDown,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  Sparkles,
 } from 'lucide-react';
 
 interface ScholarsViewProps {
@@ -45,7 +52,7 @@ interface ScholarsViewProps {
   onRefresh: () => void;
 }
 
-type SortField = 'scholar' | 'student_id' | 'scholarship' | 'year' | 'program' | 'college';
+type SortField = 'scholar' | 'student_id' | 'gawad_isko' | 'scholarship' | 'year' | 'program' | 'college';
 type SortDirection = 'asc' | 'desc';
 
 export const ScholarsView: React.FC<ScholarsViewProps> = ({
@@ -70,6 +77,43 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
   // Sorting state
   const [sortField, setSortField] = useState<SortField | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
+  // Gawad Isko Mini Tracker state (subtle & collapsible at bottom)
+  const [trackerSearch, setTrackerSearch] = useState('');
+  const [trackerFilter, setTrackerFilter] = useState<'all' | 'claimed' | 'pending'>('all');
+  const [isTrackerExpanded, setIsTrackerExpanded] = useState(false);
+
+  const awardees = scholars.filter((s) => s.gawad_isko_awardee?.toLowerCase() === 'yes');
+  const claimedAwardees = awardees.filter((s) => s.gawad_isko_certificate_claimed?.toLowerCase() === 'yes');
+  const pendingAwardees = awardees.filter((s) => s.gawad_isko_certificate_claimed?.toLowerCase() !== 'yes');
+  const claimedPercent = awardees.length > 0 ? Math.round((claimedAwardees.length / awardees.length) * 100) : 0;
+
+  const filteredAwardees = awardees.filter((s) => {
+    if (trackerFilter === 'claimed' && s.gawad_isko_certificate_claimed?.toLowerCase() !== 'yes') return false;
+    if (trackerFilter === 'pending' && s.gawad_isko_certificate_claimed?.toLowerCase() === 'yes') return false;
+    if (!trackerSearch.trim()) return true;
+    const q = trackerSearch.toLowerCase();
+    return (
+      s.name.toLowerCase().includes(q) ||
+      s.student_id.toLowerCase().includes(q) ||
+      s.year_program.toLowerCase().includes(q) ||
+      s.college.toLowerCase().includes(q)
+    );
+  });
+
+  const handleToggleCertificate = async (scholarId: string, currentClaimed: boolean, scholarName: string) => {
+    const nextVal = !currentClaimed;
+    try {
+      await api.updateScholarCertificate(scholarId, nextVal);
+      onRefresh();
+      setToastMessage(
+        `${scholarName}: Certificate marked as ${nextVal ? 'Received / Given' : 'Pending'}.`
+      );
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (err: any) {
+      alert('Failed to update certificate status: ' + err.message);
+    }
+  };
 
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
 
@@ -105,16 +149,18 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
         return formatScholarName(s).toLowerCase();
       case 'student_id':
         return (s.student_id || '').toLowerCase();
+      case 'gawad_isko':
+        return s.gawad_isko_awardee?.toLowerCase() === 'yes' ? 1 : 0;
       case 'scholarship':
         return resolveScholarScholarshipType(s).toLowerCase();
       case 'year': {
-        const { yearLevel } = parseYearProgram(s.year_program || '');
-        const y = s.year_level || yearLevel || '0';
+        const { yearLevel } = parseYearProgram(s.year_program || '', s.student_id);
+        const y = normalizeYearLevel(s.year_level || yearLevel, s.student_id);
         return parseInt(y, 10) || 0;
       }
       case 'program': {
-        const { academicProgram } = parseYearProgram(s.year_program || '');
-        return (s.academic_program || academicProgram || s.year_program || '').toLowerCase();
+        const { academicProgram } = parseYearProgram(s.year_program || '', s.student_id);
+        return cleanAcademicProgram(s.academic_program || academicProgram || s.year_program || '').toLowerCase();
       }
       case 'college':
         return (s.college || '').toLowerCase();
@@ -260,6 +306,8 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
     const headers = [
       'Student ID',
       'Scholar Name (Last Name, First Name M.I.)',
+      'Gawad Isko Awardee',
+      'Certificate Received',
       'Scholarship Type',
       'Year Level',
       'Academic Program',
@@ -268,14 +316,17 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
       'Unique QR Code',
     ];
     const rows = dataToExport.map((s) => {
-      const { yearLevel, academicProgram } = parseYearProgram(s.year_program || '');
-      const prog = s.academic_program || academicProgram || s.year_program;
-      const yNum = s.year_level || yearLevel || '1';
+      const { yearLevel, academicProgram } = parseYearProgram(s.year_program || '', s.student_id);
+      const prog = cleanAcademicProgram(s.academic_program || academicProgram || s.year_program);
+      const yNum = normalizeYearLevel(s.year_level || yearLevel, s.student_id);
+      const yearDisplay = formatYearLevelDisplay(yNum, s.student_id);
       return [
         `"${s.student_id}"`,
         `"${formatScholarName(s)}"`,
+        `"${s.gawad_isko_awardee?.toLowerCase() === 'yes' ? 'Yes' : 'No'}"`,
+        `"${s.gawad_isko_certificate_claimed?.toLowerCase() === 'yes' ? 'Yes' : 'No'}"`,
         `"${resolveScholarScholarshipType(s)}"`,
-        `"${yNum}"`,
+        `"${yearDisplay}"`,
         `"${prog}"`,
         `"${s.college}"`,
         `"${s.email}"`,
@@ -407,14 +458,14 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto">
           {/* Scholarship Filter */}
-          <div className="flex items-center space-x-1.5 shrink-0">
-            <span className="text-xs font-semibold text-slate-500">Scholarship:</span>
+          <div className="flex items-center space-x-1.5 w-full sm:w-auto">
+            <span className="text-xs font-semibold text-slate-500 shrink-0">Scholarship:</span>
             <select
               value={selectedScholarship}
               onChange={(e) => setSelectedScholarship(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#004ACD]"
+              className="flex-1 sm:flex-initial px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#004ACD] min-w-0"
             >
               <option value="All">All Types</option>
               <option value="UGS">UGS (All)</option>
@@ -426,12 +477,12 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
           </div>
 
           {/* College Filter */}
-          <div className="flex items-center space-x-1.5 shrink-0">
-            <span className="text-xs font-semibold text-slate-500">College:</span>
+          <div className="flex items-center space-x-1.5 w-full sm:w-auto min-w-0">
+            <span className="text-xs font-semibold text-slate-500 shrink-0">College:</span>
             <select
               value={selectedCollege}
               onChange={(e) => setSelectedCollege(e.target.value)}
-              className="w-full sm:w-56 px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#004ACD]"
+              className="flex-1 sm:w-56 px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#004ACD] min-w-0 max-w-full"
             >
               <option value="All">All Colleges ({scholars.length})</option>
               {colleges.map((c) => (
@@ -519,7 +570,7 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
                 {renderSortableHeader('Year', 'year')}
                 {renderSortableHeader('Program', 'program')}
                 {renderSortableHeader('College', 'college')}
-                <th className="py-3 px-3 whitespace-nowrap">QR Pass</th>
+                {renderSortableHeader('Gawad Isko Awardee?', 'gawad_isko', 'whitespace-nowrap text-center')}
                 <th className="py-3 px-4 text-right whitespace-nowrap">Actions</th>
               </tr>
             </thead>
@@ -540,10 +591,10 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
                 sortedScholars.map((sch) => {
                   const sType = resolveScholarScholarshipType(sch);
                   const isSelected = selectedIds.has(sch.id);
-                  const { yearLevel, academicProgram } = parseYearProgram(sch.year_program || '');
-                  const prog = sch.academic_program || academicProgram || sch.year_program;
-                  const yNum = sch.year_level || yearLevel || '1';
-                  const suffix = yNum === '1' ? '1st' : yNum === '2' ? '2nd' : yNum === '3' ? '3rd' : `${yNum}th`;
+                  const { yearLevel, academicProgram } = parseYearProgram(sch.year_program || '', sch.student_id);
+                  const prog = cleanAcademicProgram(sch.academic_program || academicProgram || sch.year_program);
+                  const yNum = normalizeYearLevel(sch.year_level || yearLevel, sch.student_id);
+                  const yearDisplay = formatYearLevelDisplay(yNum, sch.student_id);
 
                   return (
                     <tr
@@ -619,7 +670,7 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
                       {/* Year */}
                       <td className="py-3 px-3 whitespace-nowrap">
                         <span className="text-slate-700 font-medium whitespace-nowrap">
-                          {suffix} Year
+                          {yearDisplay}
                         </span>
                       </td>
 
@@ -639,15 +690,33 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
                         </div>
                       </td>
 
-                      {/* QR Code Status */}
-                      <td className="py-3 px-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => onViewQrBadge(sch)}
-                          className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 font-semibold text-[11px] transition-colors"
-                        >
-                          <QrCode className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>View Pass</span>
-                        </button>
+                      {/* Gawad Isko Awardee? Checkbox */}
+                      <td className="py-3 px-3 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-center">
+                          <input
+                            type="checkbox"
+                            checked={sch.gawad_isko_awardee?.toLowerCase() === 'yes'}
+                            onChange={async (e) => {
+                              const nextVal = e.target.checked;
+                              try {
+                                await api.toggleGawadIskoAwardee(sch.id, nextVal);
+                                onRefresh();
+                                setToastMessage(
+                                  `${formatScholarName(sch)}: Gawad Isko Awardee set to ${nextVal ? 'Yes' : 'No'}.`
+                                );
+                                setTimeout(() => setToastMessage(null), 3000);
+                              } catch (err: any) {
+                                alert('Failed to update Gawad Isko status: ' + err.message);
+                              }
+                            }}
+                            title={
+                              sch.gawad_isko_awardee?.toLowerCase() === 'yes'
+                                ? 'Gawad Isko Awardee: Yes (Click to toggle)'
+                                : 'Gawad Isko Awardee: No (Click to toggle)'
+                            }
+                            className="w-4 h-4 rounded text-[#004ACD] border-slate-300 focus:ring-[#004ACD] focus:ring-offset-0 cursor-pointer accent-[#004ACD]"
+                          />
+                        </div>
                       </td>
 
                       {/* Actions */}
@@ -727,6 +796,233 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
             <span>Digital QR attendance passes active</span>
           </div>
         </div>
+      </div>
+
+      {/* Subtle Bottom Tracker: Gawad Isko Certificate Distribution */}
+      <div className="bg-slate-50/80 rounded-xl border border-slate-200/90 text-slate-600 transition-all">
+        {/* Subtle Lowkey Header Strip */}
+        <div
+          onClick={() => setIsTrackerExpanded(!isTrackerExpanded)}
+          className="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 cursor-pointer hover:bg-slate-100/70 transition-colors select-none rounded-xl"
+        >
+          <div className="flex items-center space-x-2.5">
+            <div className="w-6 h-6 rounded-md bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+              <Award className="w-3.5 h-3.5" />
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-semibold text-slate-700">
+                Gawad Isko Certificate Tracker
+              </span>
+              <span className="text-[10px] text-slate-400 font-normal">
+                ({awardees.length} awardee{awardees.length === 1 ? '' : 's'})
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-3 self-end sm:self-center text-xs">
+            {/* Minimal Stat Badges */}
+            <div className="flex items-center space-x-2 text-[11px]">
+              <span className="text-slate-500">
+                Given:{' '}
+                <strong className="text-emerald-700 font-semibold">
+                  {claimedAwardees.length}
+                </strong>
+                <span className="text-slate-400 text-[10px] ml-0.5">({claimedPercent}%)</span>
+              </span>
+              <span className="text-slate-300">•</span>
+              <span className="text-slate-500">
+                Pending:{' '}
+                <strong className="text-amber-700 font-semibold">
+                  {pendingAwardees.length}
+                </strong>
+              </span>
+            </div>
+
+            {/* Subtle Progress Bar */}
+            <div className="w-20 bg-slate-200 rounded-full h-1.5 overflow-hidden hidden sm:block">
+              <div
+                className="bg-emerald-500 h-full transition-all duration-300"
+                style={{ width: `${claimedPercent}%` }}
+              />
+            </div>
+
+            {/* Collapse / Expand Toggle Icon & Label */}
+            <button
+              type="button"
+              className="inline-flex items-center space-x-1 text-slate-400 hover:text-slate-600 text-xs pl-1"
+              aria-label={isTrackerExpanded ? 'Hide certificate tracker details' : 'Show certificate tracker details'}
+            >
+              <span className="text-[11px] font-medium hidden md:inline">
+                {isTrackerExpanded ? 'Hide' : 'View'}
+              </span>
+              {isTrackerExpanded ? (
+                <ChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Collapsible Expanded Body */}
+        {isTrackerExpanded && (
+          <div className="p-4 pt-2 border-t border-slate-200/80 bg-white rounded-b-xl space-y-3">
+            {/* Search and Quick Filters */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-2">
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="w-3 h-3 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search awardees..."
+                  value={trackerSearch}
+                  onChange={(e) => setTrackerSearch(e.target.value)}
+                  className="w-full pl-7 pr-6 py-1.5 rounded-lg border border-slate-200 bg-slate-50/50 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:bg-white"
+                />
+                {trackerSearch && (
+                  <button
+                    onClick={() => setTrackerSearch('')}
+                    className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              {/* Status Filter Tabs */}
+              <div className="flex items-center space-x-1 self-start sm:self-center bg-slate-100 p-0.5 rounded-lg text-xs">
+                <button
+                  type="button"
+                  onClick={() => setTrackerFilter('all')}
+                  className={`px-2 py-0.5 rounded-md font-medium text-[11px] transition-all cursor-pointer ${
+                    trackerFilter === 'all'
+                      ? 'bg-white text-slate-900 shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All ({awardees.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrackerFilter('claimed')}
+                  className={`px-2 py-0.5 rounded-md font-medium text-[11px] transition-all cursor-pointer ${
+                    trackerFilter === 'claimed'
+                      ? 'bg-emerald-600 text-white shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Given ({claimedAwardees.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrackerFilter('pending')}
+                  className={`px-2 py-0.5 rounded-md font-medium text-[11px] transition-all cursor-pointer ${
+                    trackerFilter === 'pending'
+                      ? 'bg-amber-600 text-white shadow-2xs font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Pending ({pendingAwardees.length})
+                </button>
+              </div>
+            </div>
+
+            {/* List of Awardees */}
+            {awardees.length === 0 ? (
+              <div className="py-4 text-center text-slate-400 text-xs bg-slate-50/50 rounded-lg border border-dashed border-slate-200">
+                <p className="text-slate-600 font-medium">No Gawad Isko Awardees registered</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Check the "Gawad Isko Awardee?" checkbox in the scholar directory above or during registration.
+                </p>
+              </div>
+            ) : filteredAwardees.length === 0 ? (
+              <div className="py-4 text-center text-slate-400 text-xs bg-slate-50/50 rounded-lg">
+                <p>No awardees match "{trackerSearch}"</p>
+                <button
+                  onClick={() => {
+                    setTrackerSearch('');
+                    setTrackerFilter('all');
+                  }}
+                  className="text-xs text-[#004ACD] hover:underline mt-1 cursor-pointer"
+                >
+                  Reset filters
+                </button>
+              </div>
+            ) : (
+              <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 rounded-lg border border-slate-200 text-xs bg-white">
+                {filteredAwardees.map((awardee) => {
+                  const isClaimed = awardee.gawad_isko_certificate_claimed?.toLowerCase() === 'yes';
+                  const displayName = formatScholarName(awardee);
+                  return (
+                    <div
+                      key={awardee.id}
+                      className="p-2 px-3 flex items-center justify-between gap-2.5 hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="flex items-center space-x-2.5 min-w-0">
+                        <span
+                          className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 ${
+                            isClaimed
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {isClaimed ? '✓' : '•'}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center space-x-1.5">
+                            <span className="font-semibold text-slate-800 truncate">
+                              {displayName}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400">
+                              {awardee.student_id}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 truncate">
+                            {awardee.year_program} • {awardee.college}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2 shrink-0">
+                        {isClaimed ? (
+                          <div className="flex items-center space-x-1.5">
+                            <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                              <span>Given</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleCertificate(awardee.id, true, displayName)}
+                              className="text-[10px] text-slate-400 hover:text-slate-600 underline cursor-pointer"
+                              title="Revert to pending"
+                            >
+                              Undo
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center space-x-1.5">
+                            <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">
+                              <Clock className="w-2.5 h-2.5 text-slate-500" />
+                              <span>Pending</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleCertificate(awardee.id, false, displayName)}
+                              className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-medium transition-colors flex items-center space-x-1 cursor-pointer"
+                              title="Mark certificate as given"
+                            >
+                              <CheckCircle2 className="w-2.5 h-2.5" />
+                              <span>Mark Given</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Floating Toast Notification */}

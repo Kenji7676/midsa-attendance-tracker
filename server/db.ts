@@ -6,6 +6,8 @@ import {
   parseYearProgram,
   formatScholarshipType,
   parseScholarshipType,
+  normalizeYearLevel,
+  cleanAcademicProgram,
   DEFAULT_MSUIIT_COLLEGES,
 } from '../src/utils/formatters';
 
@@ -100,6 +102,9 @@ async function initSchema(db: DbHandle) {
       scholarship_type TEXT DEFAULT 'RA 7687',
       email TEXT NOT NULL,
       qr_code TEXT UNIQUE NOT NULL,
+      gawad_isko_awardee TEXT DEFAULT 'no',
+      gawad_isko_certificate_claimed TEXT DEFAULT 'no',
+      gawad_isko_certificate_received_at TEXT,
       created_at TEXT NOT NULL
     );
   `);
@@ -239,6 +244,15 @@ async function initSchema(db: DbHandle) {
     if (!colNames.includes('scholarship_type')) {
       await db.run("ALTER TABLE scholars ADD COLUMN scholarship_type TEXT DEFAULT 'RA 7687';");
     }
+    if (!colNames.includes('gawad_isko_awardee')) {
+      await db.run("ALTER TABLE scholars ADD COLUMN gawad_isko_awardee TEXT DEFAULT 'no';");
+    }
+    if (!colNames.includes('gawad_isko_certificate_claimed')) {
+      await db.run("ALTER TABLE scholars ADD COLUMN gawad_isko_certificate_claimed TEXT DEFAULT 'no';");
+    }
+    if (!colNames.includes('gawad_isko_certificate_received_at')) {
+      await db.run('ALTER TABLE scholars ADD COLUMN gawad_isko_certificate_received_at TEXT;');
+    }
   } catch (err) {
     console.error('Column migration error:', err);
   }
@@ -377,18 +391,9 @@ async function initSchema(db: DbHandle) {
         }
       }
 
-      let yearLevel = '1';
-      if (s.student_id && s.student_id.startsWith('2023-')) yearLevel = '4';
-      else if (s.student_id && s.student_id.startsWith('2024-')) yearLevel = '3';
-      else if (s.student_id && s.student_id.startsWith('2025-')) yearLevel = '2';
-      else if (s.student_id && s.student_id.startsWith('2026-')) yearLevel = '1';
-      else {
-        const d = (s.year_level || '').match(/\b([1-5])\b/);
-        yearLevel = d ? d[1] : '1';
-      }
-
-      const academicProgram = cleanProg;
-      const formattedYearProgram = formatYearProgram(yearLevel, academicProgram);
+      let yearLevel = normalizeYearLevel(s.year_level, s.student_id);
+      const academicProgram = cleanAcademicProgram(cleanProg);
+      const formattedYearProgram = formatYearProgram(yearLevel, academicProgram, s.student_id);
 
       let scholarshipCategory = s.scholarship_category;
       let scholarshipSubcategory = s.scholarship_subcategory;

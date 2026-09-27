@@ -31,6 +31,9 @@ export interface Scholar {
   qr_code: string;
   created_at: string;
   attendance_count?: number;
+  gawad_isko_awardee?: 'yes' | 'no' | string;
+  gawad_isko_certificate_claimed?: 'yes' | 'no' | string;
+  gawad_isko_certificate_received_at?: string;
 }
 
 export interface AttendanceRecord {

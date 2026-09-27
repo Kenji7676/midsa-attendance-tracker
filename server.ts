@@ -11,6 +11,8 @@ import {
   formatScholarshipType,
   parseScholarshipType,
   personalizeEmailTemplate,
+  normalizeYearLevel,
+  cleanAcademicProgram,
 } from './src/utils/formatters';
 
 async function startServer() {
@@ -26,6 +28,50 @@ async function startServer() {
   // 1. Health check
   app.get('/api/health', async (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
+  });
+
+  // Real-time synchronization state across multiple connected devices (phones, laptops, tablets)
+  const sseClients = new Set<express.Response>();
+
+  function broadcastChange(type: 'attendance' | 'scholars' | 'events' | 'stats', data: any = {}) {
+    const payload = JSON.stringify({ type, data, timestamp: Date.now() });
+    const message = `event: sync\ndata: ${payload}\n\n`;
+    for (const client of Array.from(sseClients)) {
+      try {
+        client.write(message);
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+  }
+
+  // Real-Time Server-Sent Events (SSE) stream for instant auto-sync across all devices
+  app.get('/api/realtime/stream', async (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof (res as any).flushHeaders === 'function') {
+      (res as any).flushHeaders();
+    }
+
+    res.write(`event: connected\ndata: ${JSON.stringify({ time: Date.now(), clients: sseClients.size + 1 })}\n\n`);
+
+    sseClients.add(res);
+
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(': heartbeat\n\n');
+      } catch {
+        clearInterval(heartbeat);
+        sseClients.delete(res);
+      }
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      sseClients.delete(res);
+    });
   });
 
   // Colleges Endpoints (MSU-IIT Colleges)
@@ -160,7 +206,7 @@ async function startServer() {
         [id, name.trim(), date, (time || '').trim(), venue.trim(), (description || '').trim(), status || 'upcoming', createdAt]
       );
       saveDb();
-
+      broadcastChange('events', { id });
       const created = (await queryRows(db, 'SELECT * FROM events WHERE id = ?', [id]))[0];
       res.status(201).json(created);
     } catch (err: any) {
@@ -191,6 +237,7 @@ async function startServer() {
         [name, date, time, venue, description, status || 'upcoming', id]
       );
       saveDb();
+      broadcastChange('events', { id });
 
       const updated = (await queryRows(db, 'SELECT * FROM events WHERE id = ?', [id]))[0];
       res.json(updated);
@@ -221,6 +268,7 @@ async function startServer() {
         [name, date, time, venue, description, status || 'upcoming', id]
       );
       saveDb();
+      broadcastChange('events', { id });
 
       const updated = (await queryRows(db, 'SELECT * FROM events WHERE id = ?', [id]))[0];
       res.json(updated);
@@ -238,6 +286,7 @@ async function startServer() {
       }
       await db.run('UPDATE events SET status = ? WHERE id = ?', [String(status).trim().toLowerCase(), id]);
       saveDb();
+      broadcastChange('events', { id });
       const updated = (await queryRows(db, 'SELECT * FROM events WHERE id = ?', [id]))[0];
       res.json(updated);
     } catch (err: any) {
@@ -251,6 +300,7 @@ async function startServer() {
       await db.run('DELETE FROM attendance WHERE event_id = ?', [id]);
       await db.run('DELETE FROM events WHERE id = ?', [id]);
       saveDb();
+      broadcastChange('events', { id });
       res.json({ success: true, message: 'Event and related attendance deleted' });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -337,20 +387,20 @@ async function startServer() {
       });
 
       // Resolve academic fields
-      let cleanYearLevel = (year_level || '').toString().trim() || '1';
-      let cleanAcademicProgram = (academic_program || '').trim();
+      let cleanYearLevel = normalizeYearLevel(year_level, student_id);
+      let resolvedProgram = cleanAcademicProgram(academic_program);
       let cleanYearProgram = (year_program || '').trim();
 
-      if (!cleanAcademicProgram) {
+      if (!resolvedProgram) {
         if (cleanYearProgram) {
-          const parsedYp = parseYearProgram(cleanYearProgram);
+          const parsedYp = parseYearProgram(cleanYearProgram, student_id);
           cleanYearLevel = parsedYp.yearLevel;
-          cleanAcademicProgram = parsedYp.academicProgram;
+          resolvedProgram = parsedYp.academicProgram;
         } else {
           return res.status(400).json({ error: 'Academic degree program is required (e.g. BS Computer Science)' });
         }
       }
-      cleanYearProgram = formatYearProgram(cleanYearLevel, cleanAcademicProgram);
+      cleanYearProgram = formatYearProgram(cleanYearLevel, resolvedProgram, student_id);
 
       // Resolve scholarship type fields
       let cleanCategory = scholarship_category;
@@ -381,10 +431,15 @@ async function startServer() {
       const id = 'sch-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 6);
       const qrCode = generateQrCode(formattedStudentId);
       const createdAt = new Date().toISOString();
+      const rawAwardee = req.body.gawad_isko_awardee;
+      const cleanAwardee = String(rawAwardee || '').trim().toLowerCase() === 'yes' || rawAwardee === true ? 'yes' : 'no';
+      const rawClaimed = req.body.gawad_isko_certificate_claimed;
+      const cleanClaimed = String(rawClaimed || '').trim().toLowerCase() === 'yes' || rawClaimed === true ? 'yes' : 'no';
+      const certReceivedAt = cleanClaimed === 'yes' ? new Date().toISOString() : null;
 
       await db.run(
-        `INSERT INTO scholars (id, student_id, name, last_name, first_name, middle_initial, year_level, academic_program, year_program, college, scholarship_category, scholarship_subcategory, scholarship_type, email, qr_code, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO scholars (id, student_id, name, last_name, first_name, middle_initial, year_level, academic_program, year_program, college, scholarship_category, scholarship_subcategory, scholarship_type, email, qr_code, gawad_isko_awardee, gawad_isko_certificate_claimed, gawad_isko_certificate_received_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           formattedStudentId,
@@ -393,7 +448,7 @@ async function startServer() {
           cleanFirstName,
           cleanMi,
           cleanYearLevel,
-          cleanAcademicProgram,
+          resolvedProgram,
           cleanYearProgram,
           college.trim(),
           cleanCategory,
@@ -401,10 +456,14 @@ async function startServer() {
           cleanScholarshipType,
           email.trim().toLowerCase(),
           qrCode,
+          cleanAwardee,
+          cleanClaimed,
+          certReceivedAt,
           createdAt,
         ]
       );
       saveDb();
+      broadcastChange('scholars', { id });
 
       const created = (await queryRows(db, 'SELECT * FROM scholars WHERE id = ?', [id]))[0];
       res.status(201).json(created);
@@ -425,6 +484,13 @@ async function startServer() {
       let addedCount = 0;
       let skippedCount = 0;
       const errors: string[] = [];
+
+      // One round-trip to fetch every existing student_id, instead of a
+      // SELECT per row. Duplicate-checking then happens in memory.
+      const existingRows = await queryRows(db, 'SELECT student_id FROM scholars');
+      const existingIds = new Set(existingRows.map((r: any) => String(r.student_id).toUpperCase()));
+      const seenInThisBatch = new Set<string>();
+      const insertStatements: { sql: string; args: any[] }[] = [];
 
       for (let i = 0; i < list.length; i++) {
         const item = list[i];
@@ -452,22 +518,30 @@ async function startServer() {
         });
 
         // Support separate year level and academic program or single year_program
-        let yearLevel = (item.year_level || item.yearLevel || item['Year Level'] || item['Year'] || item.year || '').toString().trim();
-        let academicProgram = (item.academic_program || item.academicProgram || item['Academic Program'] || item['Degree Program'] || item.program || '').toString().trim();
+        const rawYear = (item.year_level || item.yearLevel || item['Year Level'] || item['Year'] || item.year || '').toString().trim();
+        const rawProg = (item.academic_program || item.academicProgram || item['Academic Program'] || item['Degree Program'] || item.program || '').toString().trim();
         const rawYearProgram = (item.year_program || item.yearProgram || item['Year/Program'] || '').toString().trim();
 
-        if (!yearLevel || !academicProgram) {
-          if (rawYearProgram) {
-            const parsedYp = parseYearProgram(rawYearProgram);
-            yearLevel = parsedYp.yearLevel;
+        let yearLevel = rawYear ? normalizeYearLevel(rawYear, rawStudentId) : '';
+        let academicProgram = cleanAcademicProgram(rawProg);
+
+        if (!rawYear && rawYearProgram) {
+          const parsedYp = parseYearProgram(rawYearProgram, rawStudentId);
+          yearLevel = parsedYp.yearLevel;
+          if (!rawProg) {
             academicProgram = parsedYp.academicProgram;
-          } else {
-            yearLevel = yearLevel || '1';
-            academicProgram = academicProgram || 'BS Computer Science';
           }
         }
 
-        const formattedYearProgram = formatYearProgram(yearLevel, academicProgram);
+        if (!yearLevel) {
+          yearLevel = normalizeYearLevel(null, rawStudentId);
+        }
+
+        if (!rawProg && !rawYearProgram) {
+          academicProgram = 'BS Computer Science';
+        }
+
+        const formattedYearProgram = formatYearProgram(yearLevel, academicProgram, rawStudentId);
         const college = (item.college || item['College'] || 'College of Computer Studies').toString().trim();
         const email = (item.email || item.email_address || item.emailAddress || item['Email Address'] || item['Email'] || '').toString().trim();
 
@@ -501,22 +575,33 @@ async function startServer() {
           continue;
         }
 
-        // Check if student_id already exists
-        const existing = await queryRows(db, 'SELECT id FROM scholars WHERE student_id = ?', [rawStudentId]);
-        if (existing.length > 0) {
+        // Check if student_id already exists (either already in the database,
+        // or already queued earlier in this same CSV upload)
+        if (existingIds.has(rawStudentId) || seenInThisBatch.has(rawStudentId)) {
           skippedCount++;
           errors.push(`Row ${i + 1} (${rawStudentId}): Already registered`);
           continue;
         }
+        seenInThisBatch.add(rawStudentId);
 
         const id = 'sch-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 6);
         const qrCode = generateQrCode(rawStudentId);
         const createdAt = new Date().toISOString();
+        const rawAwardee = (
+          item.gawad_isko_awardee ||
+          item.gawadIskoAwardee ||
+          item['Gawad Isko Awardee'] ||
+          item['Gawad Isko Awardee?'] ||
+          item['Gawad Isko'] ||
+          item['gawad_isko'] ||
+          ''
+        ).toString().trim().toLowerCase();
+        const schAwardee = ['yes', 'y', 'true', '1'].includes(rawAwardee) ? 'yes' : 'no';
 
-        await db.run(
-          `INSERT INTO scholars (id, student_id, name, last_name, first_name, middle_initial, year_level, academic_program, year_program, college, scholarship_category, scholarship_subcategory, scholarship_type, email, qr_code, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
+        insertStatements.push({
+          sql: `INSERT INTO scholars (id, student_id, name, last_name, first_name, middle_initial, year_level, academic_program, year_program, college, scholarship_category, scholarship_subcategory, scholarship_type, email, qr_code, gawad_isko_awardee, gawad_isko_certificate_claimed, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'no', ?)`,
+          args: [
             id,
             rawStudentId,
             formattedName,
@@ -532,13 +617,20 @@ async function startServer() {
             schType,
             email || `${rawStudentId.toLowerCase()}@g.msuiit.edu.ph`,
             qrCode,
+            schAwardee,
             createdAt,
-          ]
-        );
+          ],
+        });
         addedCount++;
       }
 
-      saveDb();
+      // Send every INSERT as a single batched transaction: one network
+      // round-trip to Turso instead of one per row.
+      if (insertStatements.length > 0) {
+        await db.batch(insertStatements, 'write');
+      }
+
+      broadcastChange('scholars', { addedCount });
 
       res.json({
         success: true,
@@ -616,18 +708,20 @@ async function startServer() {
         });
       }
 
+      const updatedStudentId = formattedStudentId || existing.student_id;
+
       // Resolve academic
-      let cleanYearLevel = year_level !== undefined ? (year_level || '').toString().trim() : (existing.year_level || '1');
-      let cleanAcademicProgram = academic_program !== undefined ? (academic_program || '').trim() : (existing.academic_program || '');
+      let cleanYearLevel = normalizeYearLevel(year_level !== undefined ? year_level : existing.year_level, updatedStudentId);
+      let resolvedProgram = cleanAcademicProgram(academic_program !== undefined ? academic_program : existing.academic_program);
       let cleanYearProgram = year_program !== undefined ? (year_program || '').trim() : existing.year_program;
 
-      if (cleanYearLevel && cleanAcademicProgram) {
-        cleanYearProgram = formatYearProgram(cleanYearLevel, cleanAcademicProgram);
+      if (cleanYearLevel && resolvedProgram) {
+        cleanYearProgram = formatYearProgram(cleanYearLevel, resolvedProgram, updatedStudentId);
       } else if (cleanYearProgram) {
-        const parsedYp = parseYearProgram(cleanYearProgram);
+        const parsedYp = parseYearProgram(cleanYearProgram, updatedStudentId);
         cleanYearLevel = parsedYp.yearLevel;
-        cleanAcademicProgram = parsedYp.academicProgram;
-        cleanYearProgram = formatYearProgram(cleanYearLevel, cleanAcademicProgram);
+        resolvedProgram = parsedYp.academicProgram;
+        cleanYearProgram = formatYearProgram(cleanYearLevel, resolvedProgram, updatedStudentId);
       }
 
       // Resolve scholarship fields
@@ -648,13 +742,27 @@ async function startServer() {
         updatedType = formatScholarshipType(updatedCat, updatedSub);
       }
 
-      const updatedStudentId = formattedStudentId || existing.student_id;
       const updatedCollege = college !== undefined ? college.trim() : existing.college;
       const updatedEmail = email !== undefined ? email.trim().toLowerCase() : existing.email;
 
+      let updatedAwardee = existing.gawad_isko_awardee || 'no';
+      if (req.body.gawad_isko_awardee !== undefined) {
+        updatedAwardee = String(req.body.gawad_isko_awardee).trim().toLowerCase() === 'yes' || req.body.gawad_isko_awardee === true ? 'yes' : 'no';
+      }
+      let updatedCertClaimed = existing.gawad_isko_certificate_claimed || 'no';
+      let updatedCertReceivedAt = existing.gawad_isko_certificate_received_at || null;
+      if (req.body.gawad_isko_certificate_claimed !== undefined) {
+        updatedCertClaimed = String(req.body.gawad_isko_certificate_claimed).trim().toLowerCase() === 'yes' || req.body.gawad_isko_certificate_claimed === true ? 'yes' : 'no';
+        if (updatedCertClaimed === 'yes' && !updatedCertReceivedAt) {
+          updatedCertReceivedAt = new Date().toISOString();
+        } else if (updatedCertClaimed === 'no') {
+          updatedCertReceivedAt = null;
+        }
+      }
+
       await db.run(
         `UPDATE scholars
-         SET student_id = ?, name = ?, last_name = ?, first_name = ?, middle_initial = ?, year_level = ?, academic_program = ?, year_program = ?, college = ?, scholarship_category = ?, scholarship_subcategory = ?, scholarship_type = ?, email = ?
+         SET student_id = ?, name = ?, last_name = ?, first_name = ?, middle_initial = ?, year_level = ?, academic_program = ?, year_program = ?, college = ?, scholarship_category = ?, scholarship_subcategory = ?, scholarship_type = ?, email = ?, gawad_isko_awardee = ?, gawad_isko_certificate_claimed = ?, gawad_isko_certificate_received_at = ?
          WHERE id = ?`,
         [
           updatedStudentId,
@@ -663,13 +771,16 @@ async function startServer() {
           cleanFirstName,
           cleanMi || '',
           cleanYearLevel,
-          cleanAcademicProgram,
+          resolvedProgram,
           cleanYearProgram,
           updatedCollege,
           updatedCat,
           updatedSub,
           updatedType,
           updatedEmail,
+          updatedAwardee,
+          updatedCertClaimed,
+          updatedCertReceivedAt,
           id,
         ]
       );
@@ -680,6 +791,7 @@ async function startServer() {
       }
 
       saveDb();
+      broadcastChange('scholars', { id });
 
       const updated = (await queryRows(db, 'SELECT * FROM scholars WHERE id = ?', [id]))[0];
       res.json(updated);
@@ -694,7 +806,61 @@ async function startServer() {
       await db.run('DELETE FROM attendance WHERE scholar_id = ?', [id]);
       await db.run('DELETE FROM scholars WHERE id = ?', [id]);
       saveDb();
+      broadcastChange('scholars', { id });
       res.json({ success: true, message: 'Scholar and related attendance deleted' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Dedicated endpoint to update Gawad Isko certificate status
+  app.patch('/api/scholars/:id/certificate', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { claimed } = req.body;
+      const isClaimed = String(claimed || '').toLowerCase() === 'yes' || claimed === true ? 'yes' : 'no';
+      const receivedAt = isClaimed === 'yes' ? new Date().toISOString() : null;
+
+      await db.run(
+        `UPDATE scholars
+         SET gawad_isko_certificate_claimed = ?, gawad_isko_certificate_received_at = ?
+         WHERE id = ?`,
+        [isClaimed, receivedAt, id]
+      );
+      saveDb();
+      broadcastChange('scholars', { id, action: 'certificate_update' });
+
+      const updated = (await queryRows(db, 'SELECT * FROM scholars WHERE id = ?', [id]))[0];
+      if (!updated) {
+        return res.status(404).json({ error: 'Scholar not found' });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Dedicated endpoint to toggle Gawad Isko Awardee status
+  app.patch('/api/scholars/:id/gawad-isko', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { gawad_isko_awardee } = req.body;
+      const isAwardee = String(gawad_isko_awardee || '').toLowerCase() === 'yes' || gawad_isko_awardee === true ? 'yes' : 'no';
+
+      await db.run(
+        `UPDATE scholars
+         SET gawad_isko_awardee = ?
+         WHERE id = ?`,
+        [isAwardee, id]
+      );
+      saveDb();
+      broadcastChange('scholars', { id, action: 'gawad_isko_update' });
+
+      const updated = (await queryRows(db, 'SELECT * FROM scholars WHERE id = ?', [id]))[0];
+      if (!updated) {
+        return res.status(404).json({ error: 'Scholar not found' });
+      }
+      res.json(updated);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -712,6 +878,7 @@ async function startServer() {
         await db.run('DELETE FROM scholars WHERE id = ?', [id]);
       }
       saveDb();
+      broadcastChange('scholars', { count: ids.length });
       res.json({ success: true, count: ids.length, message: `Successfully deleted ${ids.length} scholar(s)` });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -975,6 +1142,7 @@ async function startServer() {
             [signOutTimestamp, signOutMethod, existingRecord.id]
           );
           saveDb();
+          broadcastChange('attendance', { eventId: event_id, scholarId: scholar.id, action: 'sign_out' });
 
           const updatedRecord = (await queryRows(
             db,
@@ -1040,6 +1208,7 @@ async function startServer() {
         [attId, event_id, scholar.id, scholar.student_id, timestamp, signInTime, status, check_in_method, notes]
       );
       saveDb();
+      broadcastChange('attendance', { eventId: event_id, scholarId: scholar.id, action: 'sign_in' });
 
       const newRecord = (await queryRows(
         db,
@@ -1084,6 +1253,7 @@ async function startServer() {
         [signOutTimestamp, sign_out_method, id]
       );
       saveDb();
+      broadcastChange('attendance', { id, action: 'sign_out' });
 
       const updated = (await queryRows(
         db,
@@ -1118,6 +1288,7 @@ async function startServer() {
       const { id } = req.params;
       await db.run('DELETE FROM attendance WHERE id = ?', [id]);
       saveDb();
+      broadcastChange('attendance', { id });
       res.json({ success: true, message: 'Attendance record deleted' });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1135,6 +1306,7 @@ async function startServer() {
         await db.run('DELETE FROM attendance WHERE id = ?', [id]);
       }
       saveDb();
+      broadcastChange('attendance', { count: ids.length });
       res.json({ success: true, count: ids.length, message: `Successfully deleted ${ids.length} attendance record(s)` });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

@@ -10,6 +10,8 @@ import {
   parseYearProgram,
   formatScholarshipType,
   parseScholarshipType,
+  normalizeYearLevel,
+  cleanAcademicProgram,
   DEFAULT_MSUIIT_COLLEGES,
 } from '../utils/formatters';
 
@@ -48,6 +50,7 @@ export const ScholarModal: React.FC<ScholarModalProps> = ({
   const [error, setError] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isGawadIskoAwardee, setIsGawadIskoAwardee] = useState(false);
 
   // Fetch persistent colleges from backend
   useEffect(() => {
@@ -87,14 +90,14 @@ export const ScholarModal: React.FC<ScholarModalProps> = ({
 
       // Handle year & academic program
       if (scholarToEdit.academic_program) {
-        setYearLevel(scholarToEdit.year_level || '1');
-        setAcademicProgram(scholarToEdit.academic_program);
+        setYearLevel(normalizeYearLevel(scholarToEdit.year_level, scholarToEdit.student_id));
+        setAcademicProgram(cleanAcademicProgram(scholarToEdit.academic_program));
       } else if (scholarToEdit.year_program) {
-        const yp = parseYearProgram(scholarToEdit.year_program);
+        const yp = parseYearProgram(scholarToEdit.year_program, scholarToEdit.student_id);
         setYearLevel(yp.yearLevel);
         setAcademicProgram(yp.academicProgram);
       } else {
-        setYearLevel('1');
+        setYearLevel(normalizeYearLevel(null, scholarToEdit.student_id));
         setAcademicProgram('');
       }
 
@@ -113,6 +116,7 @@ export const ScholarModal: React.FC<ScholarModalProps> = ({
 
       setCollege(scholarToEdit.college || collegesList[0] || 'College of Computer Studies');
       setEmail(scholarToEdit.email);
+      setIsGawadIskoAwardee(scholarToEdit.gawad_isko_awardee?.toLowerCase() === 'yes');
     } else {
       setStudentId('');
       setSurname('');
@@ -124,6 +128,7 @@ export const ScholarModal: React.FC<ScholarModalProps> = ({
       setScholarshipSubcategory('RA 7687');
       setCollege(collegesList[0] || 'College of Computer Studies');
       setEmail('');
+      setIsGawadIskoAwardee(false);
     }
     setError('');
     setIsAddingCollege(false);
@@ -215,7 +220,9 @@ export const ScholarModal: React.FC<ScholarModalProps> = ({
 
     // Strictly format display name as "Last Name, First Name M.I." e.g. "La Cruz, Juan D."
     const formattedName = `${cleanSurname}, ${cleanFirstName}${miFormatted ? ' ' + miFormatted : ''}`;
-    const formattedYearProgram = formatYearProgram(yearLevel, cleanProgram);
+    const cleanYear = normalizeYearLevel(yearLevel, cleanStudentId);
+    const sanitizedProgram = cleanAcademicProgram(cleanProgram);
+    const formattedYearProgram = formatYearProgram(cleanYear, sanitizedProgram, cleanStudentId);
     const finalScholarshipType = formatScholarshipType(scholarshipCategory, scholarshipSubcategory);
 
     setLoading(true);
@@ -227,14 +234,15 @@ export const ScholarModal: React.FC<ScholarModalProps> = ({
       last_name: cleanSurname,
       first_name: cleanFirstName,
       middle_initial: miFormatted,
-      year_level: yearLevel,
-      academic_program: cleanProgram,
+      year_level: cleanYear,
+      academic_program: sanitizedProgram,
       year_program: formattedYearProgram,
       college: college.trim(),
       scholarship_category: scholarshipCategory,
       scholarship_subcategory: scholarshipSubcategory,
       scholarship_type: finalScholarshipType,
       email: cleanEmail,
+      gawad_isko_awardee: isGawadIskoAwardee ? 'yes' : 'no',
     };
 
     try {
@@ -639,6 +647,30 @@ export const ScholarModal: React.FC<ScholarModalProps> = ({
               onChange={(e) => setEmail(e.target.value)}
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-[#004ACD] focus:border-transparent text-slate-800 text-xs"
             />
+          </div>
+
+          {/* Gawad Isko Awardee Checkbox */}
+          <div className="p-3.5 bg-gradient-to-r from-amber-50 to-yellow-50/60 rounded-2xl border border-amber-200 flex items-start space-x-3">
+            <div className="flex items-center h-5 mt-0.5">
+              <input
+                id="gawad_isko_checkbox"
+                type="checkbox"
+                checked={isGawadIskoAwardee}
+                onChange={(e) => setIsGawadIskoAwardee(e.target.checked)}
+                className="w-4 h-4 rounded text-amber-600 border-amber-300 focus:ring-amber-500 cursor-pointer"
+              />
+            </div>
+            <label htmlFor="gawad_isko_checkbox" className="cursor-pointer select-none">
+              <div className="flex items-center space-x-1.5">
+                <span className="text-xs font-bold text-slate-800">Gawad Isko Awardee</span>
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-200 text-amber-900 uppercase">
+                  Honor Awardee
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                Check this box if this scholar is an official Gawad Isko Awardee. This enables certificate tracking and special recognition upon sign-in.
+              </p>
+            </label>
           </div>
 
           {!scholarToEdit && (

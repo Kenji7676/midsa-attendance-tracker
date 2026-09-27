@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Scholar } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -32,6 +32,18 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
   const [emailError, setEmailError] = useState<string | null>(null);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const badgeRef = useRef<HTMLDivElement>(null);
+
+  // Keyboard shortcut: Esc to close pass
+  useEffect(() => {
+    if (!scholar) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [scholar, onClose]);
 
   if (!scholar) return null;
 
@@ -75,7 +87,7 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
 
     try {
       const subject = `Your Official MIDSA Digital QR Pass - ${formattedName} (${scholar.student_id})`;
-      const body = `Dear ${formattedName},\n\nWe are pleased to provide you with your official MIDSA Digital Scholar Attendance Pass.\n\nYour Scholar Profile:\n• Student ID: ${scholar.student_id}\n• Program: ${scholar.year_program}\n• College: ${scholar.college}\n• Registered Email: ${scholar.email}\n• Unique QR Code: ${scholar.qr_code}\n\nYour unique QR code is attached below and ready for scanning at our attendance check-in stations.\n\nThank you for your active participation!\n\nBest regards,\nMIDSA Executive Committee & Secretariat`;
+      const body = `Dear ${formattedName},\n\nWe are pleased to provide you with your official MIDSA Digital Scholar Attendance Pass.\n\nYour Scholar Profile:\n• Student ID: ${scholar.student_id}\n• Year & Program: ${scholar.year_program}\n• College: ${scholar.college}\n• Registered Email: ${scholar.email}\n• Unique QR Code: ${scholar.qr_code}\n\nYour unique QR code is attached below and ready for scanning at our attendance check-in stations.\n\nThank you for your active participation!\n\nBest regards,\nMIDSA Executive Committee & Secretariat`;
 
       const result = await sendScholarEmailPass({
         scholar,
@@ -101,10 +113,15 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+      <div
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto"
+      >
         <div
           id="qr-badge-modal"
-          className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200"
+          className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in duration-200 my-auto"
         >
           {/* Modal Top Controls */}
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 bg-slate-50">
@@ -113,10 +130,15 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
               Official Scholar Attendance Pass
             </span>
             <button
+              type="button"
+              id="close-qr-badge-btn"
               onClick={onClose}
-              className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-200 transition-colors"
+              className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-200/80 hover:bg-rose-100 text-slate-700 hover:text-rose-600 border border-slate-300 hover:border-rose-300 transition-colors cursor-pointer font-bold text-xs"
+              title="Close Pass (Esc)"
+              aria-label="Close Official Scholar Attendance Pass"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
+              <span>Close</span>
             </button>
           </div>
 
@@ -185,7 +207,7 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
                     <span className="font-bold text-[#00F7FF]">{resolveScholarScholarshipType(scholar)}</span>
                   </div>
                   <div>
-                    <span className="text-white/60 font-medium">Program: </span>
+                    <span className="text-white/60 font-medium">Year & Program: </span>
                     <span className="font-semibold text-white">{scholar.year_program}</span>
                   </div>
                   <div>
@@ -258,6 +280,16 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
                   <span>Print Pass</span>
                 </button>
               </div>
+
+              <button
+                type="button"
+                id="close-qr-badge-bottom-btn"
+                onClick={onClose}
+                className="w-full flex items-center justify-center space-x-1.5 py-2.5 px-4 rounded-xl border border-slate-200 bg-slate-50 hover:bg-rose-50 hover:border-rose-200 text-slate-700 hover:text-rose-600 text-xs font-bold transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4 text-slate-500 hover:text-rose-600" />
+                <span>Close Pass</span>
+              </button>
             </div>
           </div>
         </div>

@@ -122,7 +122,7 @@ function buildHtmlBody(scholar: Scholar, customBodyText: string): string {
 
           <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-top: 10px; font-size: 12px; text-align: left; background-color: rgba(0, 0, 0, 0.2); border-radius: 8px; padding: 10px;">
             <tr>
-              <td style="color: #bfdbfe; padding: 3px 6px; width: 80px;">Program:</td>
+              <td style="color: #bfdbfe; padding: 3px 6px; width: 110px;">Year & Program:</td>
               <td style="color: #ffffff; font-weight: 600; padding: 3px 6px;">${scholar.year_program}</td>
             </tr>
             <tr>

@@ -113,6 +113,32 @@ export const api = {
     if (!res.ok) throw new Error('Failed to delete scholar');
   },
 
+  async updateScholarCertificate(id: string, claimed: boolean): Promise<Scholar> {
+    const res = await fetch(`/api/scholars/${id}/certificate`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claimed: claimed ? 'yes' : 'no' }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to update certificate status');
+    }
+    return res.json();
+  },
+
+  async toggleGawadIskoAwardee(id: string, isAwardee: boolean): Promise<Scholar> {
+    const res = await fetch(`/api/scholars/${id}/gawad-isko`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gawad_isko_awardee: isAwardee ? 'yes' : 'no' }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to update Gawad Isko Awardee status');
+    }
+    return res.json();
+  },
+
   async batchDeleteScholars(ids: string[]): Promise<{ count: number }> {
     const res = await fetch('/api/scholars/batch-delete', {
       method: 'POST',
