@@ -1,4 +1,5 @@
 import { createClient, type Client } from '@libsql/client';
+import crypto from 'crypto';
 import {
   formatScholarName,
   parseScholarName,
@@ -15,6 +16,26 @@ import {
 // server.ts (db.run(...)) keep working unchanged, aside from adding `await`.
 export interface DbHandle extends Client {
   run(sql: string, params?: any[]): Promise<void>;
+}
+
+export function hashPassword(password: string, salt: string): string {
+  return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+}
+
+export function verifyPassword(password: string, hash: string, salt: string): boolean {
+  try {
+    const checkHash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+    const hashBuf = Buffer.from(hash, 'hex');
+    const checkBuf = Buffer.from(checkHash, 'hex');
+    if (hashBuf.length !== checkBuf.length) return false;
+    return crypto.timingSafeEqual(hashBuf, checkBuf);
+  } catch {
+    return false;
+  }
+}
+
+export function generateSalt(): string {
+  return crypto.randomBytes(16).toString('hex');
 }
 
 let dbInstance: DbHandle | null = null;
@@ -161,6 +182,52 @@ async function initSchema(db: DbHandle) {
       details TEXT
     );
   `);
+
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS admin_auth (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      display_name TEXT DEFAULT 'MIDSA Admin',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      username TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+  `);
+
+  // Seed default MIDSA Admin credentials if none exists
+  try {
+    const adminCheck = await queryRows(db, 'SELECT * FROM admin_auth LIMIT 1;');
+    if (adminCheck.length === 0) {
+      const defaultSalt = generateSalt();
+      const defaultHash = hashPassword('kenjigwapo', defaultSalt);
+      await db.run(
+        `INSERT INTO admin_auth (id, username, password_hash, salt, display_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?);`,
+        [
+          'admin-primary',
+          'midsa2k26',
+          defaultHash,
+          defaultSalt,
+          'MIDSA Admin',
+          new Date().toISOString(),
+          new Date().toISOString(),
+        ]
+      );
+    }
+  } catch (err) {
+    console.error('Error seeding admin credentials:', err);
+  }
 
   await db.run(`
     CREATE TABLE IF NOT EXISTS colleges (

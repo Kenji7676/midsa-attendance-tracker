@@ -259,22 +259,21 @@ export const CsvUploadModal: React.FC<CsvUploadModalProps> = ({ isOpen, onClose,
 
         <div className="p-6 space-y-5">
           {/* Template Download Prompt */}
-          <div className="flex items-center justify-between p-3.5 bg-blue-50/70 border border-[#0165CB]/20 rounded-xl">
-            <div className="flex items-center space-x-2.5">
-              <FileText className="w-5 h-5 text-[#004ACD]" />
-              <div className="text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-[#004ACD]">Need the standard CSV format?</span>
-                  <span className="text-[10px] font-mono font-bold bg-[#004ACD]/10 text-[#004ACD] px-1.5 py-0.5 rounded border border-[#004ACD]/20">
-                    ID Format: XXXX-XXXX (e.g. 2024-0001)
-                  </span>
-                </div>
-                <p className="text-slate-600">Includes scholarship type (UGS RA 7687/MERIT, JLSS, MOST) and profile fields.</p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3.5 bg-blue-50/70 border border-[#0165CB]/20 rounded-xl">
+            <div className="flex items-center space-x-2.5 min-w-0">
+              <FileText className="w-5 h-5 text-[#004ACD] shrink-0" />
+              <div className="text-xs min-w-0">
+                <span className="font-bold text-[#004ACD] sm:whitespace-nowrap block">
+                  Need the standard CSV format?
+                </span>
+                <p className="text-slate-600 text-[11px] mt-0.5">
+                  Includes scholarship type (UGS RA 7687/MERIT, JLSS, MOST) and profile fields.
+                </p>
               </div>
             </div>
             <button
               onClick={handleDownloadTemplate}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-white border border-[#004ACD] text-[#004ACD] hover:bg-blue-50 text-xs font-bold shadow-xs transition-colors shrink-0"
+              className="flex items-center justify-center space-x-1.5 px-3 py-1.5 rounded-lg bg-white border border-[#004ACD] text-[#004ACD] hover:bg-blue-50 text-xs font-bold shadow-xs transition-colors shrink-0 whitespace-nowrap cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Download CSV Template</span>

@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { getDb, saveDb, queryRows } from './server/db';
+import { getDb, saveDb, queryRows, hashPassword, verifyPassword, generateSalt } from './server/db';
 import crypto from 'crypto';
 import {
   formatScholarName,
@@ -17,7 +17,7 @@ import {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -28,6 +28,222 @@ async function startServer() {
   // 1. Health check
   app.get('/api/health', async (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
+  });
+
+  // --- AUTHENTICATION ENDPOINTS ---
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { username, password } = req.body;
+      if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+      }
+
+      const cleanUser = String(username).trim();
+      const rows = await queryRows(db, 'SELECT * FROM admin_auth WHERE LOWER(username) = LOWER(?);', [cleanUser]);
+      if (rows.length === 0) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+      }
+
+      const admin = rows[0];
+      const isValid = verifyPassword(String(password), admin.password_hash, admin.salt);
+      if (!isValid) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+      }
+
+      // Generate cryptographically secure session token
+      const sessionToken = crypto.randomBytes(32).toString('hex');
+      const createdAt = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      await db.run(
+        `INSERT INTO admin_sessions (token, user_id, username, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [sessionToken, admin.id, admin.username, createdAt, expiresAt]
+      );
+      saveDb();
+
+      res.json({
+        success: true,
+        token: sessionToken,
+        user: {
+          id: admin.id,
+          username: admin.username,
+          displayName: admin.display_name || 'MIDSA Admin',
+        },
+      });
+    } catch (err: any) {
+      console.error('Error during login:', err);
+      res.status(500).json({ error: 'Authentication error: ' + err.message });
+    }
+  });
+
+  app.get('/api/auth/session', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ authenticated: false, error: 'No active session token provided' });
+      }
+      const token = authHeader.split(' ')[1];
+      const sessionRows = await queryRows(db, 'SELECT * FROM admin_sessions WHERE token = ?', [token]);
+      if (sessionRows.length === 0) {
+        return res.status(401).json({ authenticated: false, error: 'Session expired or invalid' });
+      }
+      const session = sessionRows[0];
+      const adminRows = await queryRows(db, 'SELECT id, username, display_name FROM admin_auth WHERE id = ?', [session.user_id]);
+      const admin = adminRows[0] || { id: session.user_id, username: session.username, display_name: 'MIDSA Admin' };
+
+      res.json({
+        authenticated: true,
+        user: {
+          id: admin.id,
+          username: admin.username,
+          displayName: admin.display_name || 'MIDSA Admin',
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ authenticated: false, error: err.message });
+    }
+  });
+
+  app.post('/api/auth/logout', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        await db.run('DELETE FROM admin_sessions WHERE token = ?', [token]);
+        saveDb();
+      }
+      res.json({ success: true, message: 'Logged out successfully' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/auth/change-account', async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Unauthorized: Session required' });
+      }
+      const token = authHeader.split(' ')[1];
+      const sessionRows = await queryRows(db, 'SELECT * FROM admin_sessions WHERE token = ?', [token]);
+      if (sessionRows.length === 0) {
+        return res.status(401).json({ error: 'Session expired or invalid' });
+      }
+      const session = sessionRows[0];
+
+      const { current_password, new_username, new_password, confirm_password } = req.body;
+      if (!current_password) {
+        return res.status(400).json({ error: 'Old password is required to change account details' });
+      }
+
+      const adminRows = await queryRows(db, 'SELECT * FROM admin_auth WHERE id = ?', [session.user_id]);
+      if (adminRows.length === 0) {
+        return res.status(404).json({ error: 'Admin account not found' });
+      }
+      const admin = adminRows[0];
+
+      // Verify current password
+      const isCurrentValid = verifyPassword(String(current_password), admin.password_hash, admin.salt);
+      if (!isCurrentValid) {
+        return res.status(400).json({ error: 'Old password is incorrect. Verification failed.' });
+      }
+
+      let updatedUsername = admin.username;
+      let updatedHash = admin.password_hash;
+      let updatedSalt = admin.salt;
+
+      // Handle username update if provided
+      if (new_username && String(new_username).trim() !== admin.username) {
+        const cleanNewUser = String(new_username).trim();
+        if (cleanNewUser.length < 3) {
+          return res.status(400).json({ error: 'Username must be at least 3 characters long' });
+        }
+        // Check if username conflict
+        const checkConflict = await queryRows(db, 'SELECT id FROM admin_auth WHERE LOWER(username) = LOWER(?) AND id != ?', [cleanNewUser, admin.id]);
+        if (checkConflict.length > 0) {
+          return res.status(409).json({ error: 'Username already in use. Please select a different username.' });
+        }
+        updatedUsername = cleanNewUser;
+      }
+
+      // Handle password update if provided
+      if (new_password) {
+        const cleanPass = String(new_password);
+        if (cleanPass.length < 8) {
+          return res.status(400).json({ error: 'New password must be at least 8 characters long' });
+        }
+        if (cleanPass !== String(confirm_password)) {
+          return res.status(400).json({ error: 'New password and confirmation do not match' });
+        }
+        updatedSalt = generateSalt();
+        updatedHash = hashPassword(cleanPass, updatedSalt);
+      }
+
+      const now = new Date().toISOString();
+      await db.run(
+        `UPDATE admin_auth
+         SET username = ?, password_hash = ?, salt = ?, updated_at = ?
+         WHERE id = ?`,
+        [updatedUsername, updatedHash, updatedSalt, now, admin.id]
+      );
+
+      // Keep active session usernames synced
+      await db.run('UPDATE admin_sessions SET username = ? WHERE user_id = ?', [updatedUsername, admin.id]);
+      saveDb();
+
+      res.json({
+        success: true,
+        message: 'Account details updated successfully',
+        user: {
+          id: admin.id,
+          username: updatedUsername,
+          displayName: admin.display_name || 'MIDSA Admin',
+        },
+      });
+    } catch (err: any) {
+      console.error('Error changing account details:', err);
+      res.status(500).json({ error: 'Failed to update account details: ' + err.message });
+    }
+  });
+
+  // --- API SECURITY MIDDLEWARE (Protects all other /api routes) ---
+  app.use('/api', async (req, res, next) => {
+    // Whitelist public endpoints
+    if (
+      req.path === '/health' ||
+      req.path === '/auth/login' ||
+      req.path === '/auth/session' ||
+      req.path === '/auth/logout' ||
+      req.path === '/auth/change-account'
+    ) {
+      return next();
+    }
+
+    // Support token via query param for SSE stream or Bearer header
+    let token = '';
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query && typeof req.query.token === 'string') {
+      token = req.query.token;
+    }
+
+    if (!token) {
+      return res.status(401).json({
+        error: 'Unauthorized: MIDSA Admin authentication required to access this resource',
+      });
+    }
+
+    const sessionRows = await queryRows(db, 'SELECT * FROM admin_sessions WHERE token = ?', [token]);
+    if (sessionRows.length === 0) {
+      return res.status(401).json({
+        error: 'Unauthorized: Session expired or invalid. Please log in again.',
+      });
+    }
+
+    (req as any).adminSession = sessionRows[0];
+    next();
   });
 
   // Real-time synchronization state across multiple connected devices (phones, laptops, tablets)
@@ -485,8 +701,7 @@ async function startServer() {
       let skippedCount = 0;
       const errors: string[] = [];
 
-      // One round-trip to fetch every existing student_id, instead of a
-      // SELECT per row. Duplicate-checking then happens in memory.
+      // One round-trip for all existing IDs; duplicate checks happen in memory.
       const existingRows = await queryRows(db, 'SELECT student_id FROM scholars');
       const existingIds = new Set(existingRows.map((r: any) => String(r.student_id).toUpperCase()));
       const seenInThisBatch = new Set<string>();
@@ -575,8 +790,6 @@ async function startServer() {
           continue;
         }
 
-        // Check if student_id already exists (either already in the database,
-        // or already queued earlier in this same CSV upload)
         if (existingIds.has(rawStudentId) || seenInThisBatch.has(rawStudentId)) {
           skippedCount++;
           errors.push(`Row ${i + 1} (${rawStudentId}): Already registered`);
@@ -624,8 +837,6 @@ async function startServer() {
         addedCount++;
       }
 
-      // Send every INSERT as a single batched transaction: one network
-      // round-trip to Turso instead of one per row.
       if (insertStatements.length > 0) {
         await db.batch(insertStatements, 'write');
       }

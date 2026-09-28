@@ -1,6 +1,6 @@
 import React from 'react';
-import { TabType } from '../types';
-import { LayoutDashboard, Calendar, Users, QrCode } from 'lucide-react';
+import type { TabType, AdminUser } from '../types';
+import { LayoutDashboard, Calendar, Users, QrCode, Settings, ShieldCheck } from 'lucide-react';
 import midsaLogo from '../assets/midsa-logo.png';
 import { GoogleAuthButton } from './GoogleAuthButton';
 
@@ -9,6 +9,8 @@ interface NavbarProps {
   onSelectTab: (tab: TabType) => void;
   totalEventsCount: number;
   totalScholarsCount: number;
+  adminUser?: AdminUser | null;
+  onLogout?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -16,6 +18,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectTab,
   totalEventsCount,
   totalScholarsCount,
+  adminUser,
 }) => {
   const tabs = [
     {
@@ -42,6 +45,12 @@ export const Navbar: React.FC<NavbarProps> = ({
       icon: QrCode,
       badge: null,
     },
+    {
+      id: 'settings' as TabType,
+      label: 'Settings',
+      icon: Settings,
+      badge: null,
+    },
   ];
 
   return (
@@ -63,9 +72,13 @@ export const Navbar: React.FC<NavbarProps> = ({
               />
             </div>
             <div>
-              <div className="flex items-center">
+              <div className="flex items-center space-x-2">
                 <span className="font-extrabold text-xl sm:text-2xl tracking-tight text-white leading-tight">
                   MIDSA
+                </span>
+                <span className="hidden xl:inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-white/15 text-[10px] font-bold text-white border border-white/20">
+                  <ShieldCheck className="w-3 h-3 text-[#00F7FF]" />
+                  <span>{adminUser?.displayName || 'MIDSA Admin'}</span>
                 </span>
               </div>
               <p className="text-[11px] text-blue-100/90 font-medium hidden sm:block tracking-wide">
@@ -74,9 +87,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
 
-          {/* Desktop Navigation Tabs & Google Auth */}
-          <div className="flex items-center space-x-3 sm:space-x-4">
-            <nav className="hidden md:flex items-center space-x-1 sm:space-x-2">
+          {/* Desktop Navigation Tabs & Integrations */}
+          <div className="flex items-center space-x-2 sm:space-x-3">
+            <nav className="hidden md:flex items-center space-x-1 sm:space-x-1.5">
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = currentTab === tab.id;
@@ -85,7 +98,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     key={tab.id}
                     id={`nav-tab-${tab.id}`}
                     onClick={() => onSelectTab(tab.id)}
-                    className={`relative flex items-center space-x-2 px-3.5 py-2 rounded-lg text-sm font-semibold transition-all duration-150 ${
+                    className={`relative flex items-center space-x-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-all duration-150 cursor-pointer ${
                       isActive
                         ? 'bg-white text-[#004ACD] shadow-sm'
                         : 'text-blue-50 hover:bg-[#0165CB] hover:text-white'
@@ -109,8 +122,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               })}
             </nav>
 
-            {/* Google Account / Sign in for Gmail */}
-            <div className="pl-1 sm:pl-2 border-l border-white/20">
+            {/* Google Account / Sign in for Gmail (Explicitly noted as separate for emails) */}
+            <div className="pl-1 sm:pl-2 border-l border-white/20 flex items-center space-x-2">
               <GoogleAuthButton />
             </div>
           </div>
@@ -127,7 +140,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               key={tab.id}
               id={`mobile-nav-${tab.id}`}
               onClick={() => onSelectTab(tab.id)}
-              className={`flex flex-col items-center py-1 px-2.5 rounded-lg text-[11px] font-medium transition-colors ${
+              className={`flex flex-col items-center py-1 px-2 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
                 isActive
                   ? 'text-[#00F7FF] font-bold bg-[#0165CB]/60'
                   : 'text-blue-100 hover:text-white'

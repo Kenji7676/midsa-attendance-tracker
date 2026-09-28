@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Scholar } from '../types';
 import { api } from '../services/api';
 import { ConfirmModal } from './ConfirmModal';
+import { SelectTemplateModal } from './SelectTemplateModal';
 import {
   formatScholarName,
   getFirstNameInitials,
@@ -77,6 +78,9 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
   // Sorting state
   const [sortField, setSortField] = useState<SortField | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
+  // Email Template Selection Modal State (for individual or selected batch)
+  const [templateModalScholars, setTemplateModalScholars] = useState<Scholar[] | null>(null);
 
   // Gawad Isko Mini Tracker state (subtle & collapsible at bottom)
   const [trackerSearch, setTrackerSearch] = useState('');
@@ -414,7 +418,7 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <button
               onClick={onOpenCsvModal}
-              className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-blue-50 border border-[#0165CB]/30 text-[#004ACD] hover:bg-blue-100 text-xs font-bold transition-all shadow-xs"
+              className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-blue-50 border border-[#0165CB]/30 text-[#004ACD] hover:bg-blue-100 text-xs font-bold transition-all shadow-xs cursor-pointer"
             >
               <Upload className="w-3.5 h-3.5 text-[#004ACD]" />
               <span>Upload Batch CSV</span>
@@ -423,9 +427,9 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
             <button
               onClick={handleExportAll}
               title={selectedIds.size > 0 ? `Export ${selectedIds.size} selected scholars to CSV` : 'Export all scholars to CSV'}
-              className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 hover:text-slate-900 text-xs font-bold transition-colors relative"
+              className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-blue-50 border border-[#0165CB]/30 text-[#004ACD] hover:bg-blue-100 text-xs font-bold transition-all shadow-xs relative cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5 text-slate-600" />
+              <Download className="w-3.5 h-3.5 text-[#004ACD]" />
               <span>Download Batch CSV</span>
               {selectedIds.size > 0 && (
                 <span className="bg-[#004ACD] text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center justify-center">
@@ -527,14 +531,24 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
 
             <div className="flex items-center space-x-2">
               <button
+                onClick={() => {
+                  const selected = scholars.filter((s) => selectedIds.has(s.id));
+                  setTemplateModalScholars(selected);
+                }}
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-[#004ACD] to-[#0165CB] hover:from-[#0165CB] hover:to-[#004ACD] text-white font-bold text-xs shadow-sm shadow-blue-500/20 transition-all cursor-pointer"
+              >
+                <Send className="w-3.5 h-3.5 text-[#00F7FF]" />
+                <span>Batch Email Selected ({selectedIds.size})</span>
+              </button>
+              <button
                 onClick={handleClearSelection}
-                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold text-xs transition-colors"
+                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
               >
                 Clear Selection
               </button>
               <button
                 onClick={() => setShowBatchDeleteConfirm(true)}
-                className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-sm shadow-rose-600/20 transition-all"
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-sm shadow-rose-600/20 transition-all cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Delete Selected ({selectedIds.size})</span>
@@ -723,9 +737,17 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
                       <td className="py-3 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end space-x-1">
                           <button
+                            onClick={() => setTemplateModalScholars([sch])}
+                            title={`Email QR Pass to ${formatScholarName(sch)}`}
+                            className="p-1.5 rounded-lg text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 transition-colors cursor-pointer"
+                          >
+                            <Mail className="w-4 h-4" />
+                          </button>
+
+                          <button
                             onClick={() => onViewQrBadge(sch)}
                             title="View Digital QR Badge"
-                            className="p-1.5 rounded-lg text-[#004ACD] hover:bg-blue-50 transition-colors"
+                            className="p-1.5 rounded-lg text-[#004ACD] hover:bg-blue-50 transition-colors cursor-pointer"
                           >
                             <QrCode className="w-4 h-4" />
                           </button>
@@ -1037,7 +1059,7 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
       <ConfirmModal
         isOpen={Boolean(scholarToDelete)}
         title="Delete Scholar Record"
-        message={`Are you sure you want to permanently delete ${scholarToDelete?.name}? This will also delete their QR code registration and all associated attendance check-in history.`}
+        message={`Are you sure you want to permanently delete ${scholarToDelete?.name}? This will also delete their QR code registration and all associated attendance sign-in history.`}
         detail={
           scholarToDelete
             ? `Student ID: ${scholarToDelete.student_id} • ${scholarToDelete.year_program} • ${scholarToDelete.college}`
@@ -1057,7 +1079,7 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
       <ConfirmModal
         isOpen={showBatchDeleteConfirm}
         title={`Delete ${selectedIds.size} Selected Scholar${selectedIds.size > 1 ? 's' : ''}`}
-        message={`Are you sure you want to permanently delete the ${selectedIds.size} selected scholar records? This will delete their profiles, QR codes, and any associated event attendance check-ins.`}
+        message={`Are you sure you want to permanently delete the ${selectedIds.size} selected scholar records? This will delete their profiles, QR codes, and any associated event attendance sign-ins.`}
         detail={`This action cannot be undone. ${selectedIds.size} records will be removed from the master database.`}
         confirmLabel={`Yes, Delete ${selectedIds.size} Scholars`}
         cancelLabel="Cancel"
@@ -1068,6 +1090,23 @@ export const ScholarsView: React.FC<ScholarsViewProps> = ({
           if (!isDeleting) setShowBatchDeleteConfirm(false);
         }}
       />
+
+      {/* Pop up to select template for individual or selected batch emailing */}
+      {templateModalScholars && (
+        <SelectTemplateModal
+          isOpen={Boolean(templateModalScholars)}
+          onClose={() => setTemplateModalScholars(null)}
+          scholars={templateModalScholars}
+          onSuccess={() => {
+            setToastMessage(
+              templateModalScholars.length === 1
+                ? `QR pass successfully dispatched to ${templateModalScholars[0].name}!`
+                : `Batch QR passes successfully sent to ${templateModalScholars.length} scholars!`
+            );
+            setTimeout(() => setToastMessage(null), 3500);
+          }}
+        />
+      )}
     </div>
   );
 };

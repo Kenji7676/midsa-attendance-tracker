@@ -76,7 +76,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 MIDSA Attendance Portal
               </h1>
               <p className="text-xs sm:text-sm text-blue-100/90 leading-relaxed">
-                Official attendance tracking system for DOST-SEI scholars with automated QR passes, batch registration, and event check-ins.
+                Official attendance tracking system for DOST-SEI scholars with automated QR passes, batch registration, and event sign-ins & sign-outs.
               </p>
             </div>
           </div>
@@ -152,13 +152,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Card 3: Total Attendance Check-Ins */}
+        {/* Card 3: Total Attendance Sign-Ins */}
         <div
           onClick={() => onNavigateTab('attendance')}
           className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs hover:border-[#004ACD] transition-all cursor-pointer group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Check-Ins</span>
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Sign-Ins</span>
             <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors">
               <CheckCircle2 className="w-5 h-5" />
             </div>
@@ -295,7 +295,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     {/* Visual Progress Bar */}
                     <div className="mt-3">
                       <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600 mb-1">
-                        <span>Scholars Checked In</span>
+                        <span>Scholars Signed In</span>
                         <span className="font-bold text-[#004ACD]">
                           {attendees} / {totalScholars} ({rate}%)
                         </span>
@@ -314,7 +314,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Right: Recent Live Check-In Activity Feed */}
+        {/* Right: Recent Live Sign-In Activity Feed */}
         <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden flex flex-col justify-between">
           <div>
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">
@@ -337,7 +337,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {!stats?.recent_attendance || stats.recent_attendance.length === 0 ? (
                 <div className="p-8 text-center text-xs text-slate-400">
                   <Clock className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                  No check-ins logged yet.
+                  No sign-ins logged yet.
                 </div>
               ) : (
                 stats.recent_attendance.map((rec) => {

@@ -434,12 +434,12 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       if (audioFeedback) playWarningSound();
       setLastCheckIn({
         success: false,
-        message: err.message || 'Check-in failed. Please retry.',
+        message: err.message || 'Sign-in failed. Please retry.',
       });
     }
   };
 
-  // Manual Check-In
+  // Manual Sign-In
   const handleManualCheckIn = async (scholarIdOrNumber: string, statusOverride?: 'Present' | 'Late' | 'Excused') => {
     if (!selectedEvent || !scholarIdOrNumber.trim()) return;
     if (selectedEvent.status === 'upcoming') {
@@ -481,7 +481,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       if (audioFeedback) playWarningSound();
       setLastCheckIn({
         success: false,
-        message: err.message || 'Check-in failed.',
+        message: err.message || 'Sign-in failed.',
       });
     } finally {
       setIsManualSubmitting(false);
@@ -587,7 +587,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const handleBatchMarkAbsentPresent = async () => {
     if (selectedAbsentIds.size === 0 || !selectedEvent) return;
     if (selectedEvent.status !== 'ongoing') {
-      alert(`Cannot check in scholars: Event is ${selectedEvent.status}. Mark the event as Ongoing / Active first.`);
+      alert(`Cannot sign in scholars: Event is ${selectedEvent.status}. Mark the event as Ongoing / Active first.`);
       return;
     }
     setIsBatchMarkingAbsent(true);
@@ -862,7 +862,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
               Select Event for Attendance Recording
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Choose the MIDSA event to activate live QR scanning and real-time scholar check-in.
+              Choose the MIDSA event to activate live QR scanning and real-time scholar sign-in.
             </p>
           </div>
 
@@ -1334,7 +1334,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
                     <UserCheck className="w-4 h-4 text-[#004ACD]" />
-                    <span>Manual Lookup & Quick Check-In</span>
+                    <span>Manual Lookup & Quick Sign-In</span>
                   </span>
                   <span className="text-[11px] text-slate-500">Search by Student ID, Name, or select from directory</span>
                 </div>
@@ -1384,7 +1384,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       className="flex-1 sm:flex-initial px-5 py-2 rounded-xl bg-[#004ACD] hover:bg-[#0165CB] text-white text-xs font-bold disabled:bg-slate-200 disabled:text-slate-400 transition-colors shrink-0 flex items-center justify-center space-x-1.5 cursor-pointer disabled:cursor-not-allowed whitespace-nowrap"
                     >
                       <UserCheck className="w-3.5 h-3.5" />
-                      <span>Check In</span>
+                      <span>Sign In</span>
                     </button>
                   </div>
                 </div>
@@ -1394,7 +1394,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   <div className="mt-2 text-[11px] text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-200 flex items-center space-x-1.5">
                     <Lock className="w-3.5 h-3.5 shrink-0 text-amber-600" />
                     <span>
-                      Attendance check-ins are restricted because this event is currently{' '}
+                      Attendance sign-ins are restricted because this event is currently{' '}
                       <strong className="capitalize">{selectedEvent.status}</strong>. Mark event as Ongoing above to enable entry.
                     </span>
                   </div>
@@ -1642,7 +1642,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   <div className="py-16 text-center text-slate-400 text-xs">
                     <QrCode className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                     <p className="font-semibold text-slate-600">No attendance records match filter</p>
-                    <p className="text-slate-400 mt-0.5">Start scanning scholar QR codes or use Manual Lookup to log check-ins.</p>
+                    <p className="text-slate-400 mt-0.5">Start scanning scholar QR codes or use Manual Lookup to log sign-ins.</p>
                   </div>
                 ) : (
                   <table className="w-full text-left text-xs">
@@ -1812,7 +1812,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 filteredAbsent.length === 0 ? (
                   <div className="py-16 text-center text-emerald-700 text-xs font-semibold">
                     <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-                    100% Attendance Achieved! All registered scholars are checked in.
+                    100% Attendance Achieved! All registered scholars are signed in.
                   </div>
                 ) : (
                   <table className="w-full text-left text-xs">
@@ -2157,7 +2157,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       <h5 className="font-bold text-xs sm:text-sm leading-tight text-white">
                         {lastCheckIn.alreadyCheckedIn
                           ? 'Duplicate Scan Detected'
-                          : 'Check-In Notice'}
+                          : 'Sign-In Notice'}
                       </h5>
                       <p className="text-[10px] sm:text-[11px] font-medium opacity-90">{lastCheckIn.message}</p>
                     </div>
@@ -2216,7 +2216,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       <ConfirmModal
         isOpen={Boolean(recordToDelete)}
         title="Remove Attendance Record"
-        message={`Are you sure you want to remove the check-in log for ${
+        message={`Are you sure you want to remove the sign-in log for ${
           recordToDelete
             ? formatScholarName(
                 scholars.find((s) => s.id === recordToDelete.scholar_id || s.student_id === recordToDelete.student_id) ||
@@ -2249,8 +2249,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       <ConfirmModal
         isOpen={showBatchDeleteModal}
         title={`Remove ${selectedRecordIds.size} Attendance Record(s)`}
-        message={`Are you sure you want to delete ${selectedRecordIds.size} check-in record(s) from "${selectedEvent?.name}"?`}
-        detail="The selected scholars will be removed from the checked-in roster and returned to the Pending/Absent list for this event."
+        message={`Are you sure you want to delete ${selectedRecordIds.size} sign-in record(s) from "${selectedEvent?.name}"?`}
+        detail="The selected scholars will be removed from the signed-in roster and returned to the Pending/Absent list for this event."
         confirmLabel={`Yes, Delete ${selectedRecordIds.size} Records`}
         cancelLabel="Cancel"
         isDanger={true}

@@ -136,7 +136,7 @@ export const EventsView: React.FC<EventsViewProps> = ({
             <h2 className="text-lg font-bold text-slate-800">MIDSA Events & Activities</h2>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Organize assemblies, training workshops, and manage session attendance checkpoints.
+            Organize assemblies, training workshops, and manage session attendance sign-in checkpoints.
           </p>
         </div>
 

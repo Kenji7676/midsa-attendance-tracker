@@ -1,3 +1,5 @@
+import { getAuthToken } from './api';
+
 type SyncPayload = {
   type: 'attendance' | 'scholars' | 'events' | 'stats';
   data: any;
@@ -31,8 +33,14 @@ class RealtimeSyncManager {
     }
   }
 
-  private connect() {
+  public connect() {
     if (typeof window === 'undefined') return;
+
+    const token = getAuthToken();
+    if (!token) {
+      this.disconnect();
+      return;
+    }
 
     if (this.eventSource) {
       try {
@@ -42,7 +50,7 @@ class RealtimeSyncManager {
     }
 
     try {
-      this.eventSource = new EventSource('/api/realtime/stream');
+      this.eventSource = new EventSource(`/api/realtime/stream?token=${encodeURIComponent(token)}`);
 
       this.eventSource.addEventListener('connected', () => {
         this.isConnected = true;
@@ -69,12 +77,30 @@ class RealtimeSyncManager {
           this.eventSource?.close();
         } catch {}
         this.eventSource = null;
-        this.reconnect(2500);
+        if (getAuthToken()) {
+          this.reconnect(3000);
+        }
       };
     } catch (err) {
       console.error('Failed to initialize EventSource:', err);
-      this.reconnect(4000);
+      if (getAuthToken()) {
+        this.reconnect(4000);
+      }
     }
+  }
+
+  public disconnect() {
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    if (this.eventSource) {
+      try {
+        this.eventSource.close();
+      } catch {}
+      this.eventSource = null;
+    }
+    this.isConnected = false;
   }
 
   private reconnect(delayMs: number) {

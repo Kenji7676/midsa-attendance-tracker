@@ -20,6 +20,7 @@ import {
   AlertCircle,
   RefreshCw,
   AlertTriangle,
+  Trash2,
 } from 'lucide-react';
 import {
   subscribeAuth,
@@ -29,6 +30,7 @@ import {
 } from '../services/googleAuth';
 import { sendBatchScholarEmailPasses, SendResult } from '../services/gmail';
 import { ConfirmEmailDispatchModal } from './ConfirmEmailDispatchModal';
+import { ConfirmModal } from './ConfirmModal';
 import {
   formatScholarName,
   DEFAULT_MSUIIT_COLLEGES,
@@ -57,7 +59,7 @@ export const BatchEmailModal: React.FC<BatchEmailModalProps> = ({
   const [templateName, setTemplateName] = useState('My Custom QR Template');
   const [subject, setSubject] = useState('Your Official MIDSA Digital QR Pass - {{name}} ({{student_id}})');
   const [body, setBody] = useState(
-    'Dear {{name}},\n\nWe are pleased to provide you with your official MIDSA Digital Scholar Attendance Pass.\n\nYour Scholar Profile:\n• Student ID: {{student_id}}\n• Program: {{program}}\n• College: {{college}}\n• Registered Email: {{email}}\n• Unique QR Code: {{qr_code}}\n\nYour unique QR code is attached below and ready for scanning at our attendance check-in stations. You can display this email on your smartphone or print out your pass.\n\nThank you for your active participation!\n\nBest regards,\nMIDSA Executive Committee & Secretariat'
+    'Dear {{name}},\n\nWe are pleased to provide you with your official MIDSA Digital Scholar Attendance Pass.\n\nYour Scholar Profile:\n• Student ID: {{student_id}}\n• Program: {{program}}\n• College: {{college}}\n• Registered Email: {{email}}\n• Unique QR Code: {{qr_code}}\n\nYour unique QR code is attached below and ready for scanning at our attendance sign-in stations. You can display this email on your smartphone or print out your pass.\n\nThank you for your active participation!\n\nBest regards,\nMIDSA Executive Committee & Secretariat'
   );
   const [senderName, setSenderName] = useState('MIDSA Attendance Office');
 
@@ -76,6 +78,11 @@ export const BatchEmailModal: React.FC<BatchEmailModalProps> = ({
   const [currentSendingStatus, setCurrentSendingStatus] = useState<string>('');
   const [batchResults, setBatchResults] = useState<SendResult[] | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Delete Template Confirmation Dialog
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isDeletingTemplate, setIsDeletingTemplate] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Confirmation dialog
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -132,6 +139,42 @@ export const BatchEmailModal: React.FC<BatchEmailModalProps> = ({
       setTemplateName(tmpl.name);
       setSubject(tmpl.subject);
       setBody(tmpl.body);
+    }
+  };
+
+  const handlePromptDeleteTemplate = () => {
+    if (!selectedTemplateId || selectedTemplateId.startsWith('new')) return;
+    setDeleteError(null);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmDeleteTemplate = async () => {
+    if (!selectedTemplateId || selectedTemplateId.startsWith('new')) {
+      setIsDeleteModalOpen(false);
+      return;
+    }
+    setIsDeletingTemplate(true);
+    setDeleteError(null);
+    try {
+      await api.deleteEmailTemplate(selectedTemplateId);
+      setIsDeleteModalOpen(false);
+      const updated = await api.getEmailTemplates();
+      setTemplates(updated);
+      if (updated.length > 0) {
+        handleSelectTemplate(updated[0].id);
+      } else {
+        setSelectedTemplateId('new');
+        setTemplateName('My Custom QR Template');
+        setSubject('Your Official MIDSA Digital QR Pass - {{name}} ({{student_id}})');
+        setBody(
+          'Dear {{name}},\n\nWe are pleased to provide you with your official MIDSA Digital Scholar Attendance Pass.\n\nYour Scholar Profile:\n• Student ID: {{student_id}}\n• Program: {{program}}\n• College: {{college}}\n• Registered Email: {{email}}\n• Unique QR Code: {{qr_code}}\n\nYour unique QR code is attached below and ready for scanning at our attendance sign-in stations. You can display this email on your smartphone or print out your pass.\n\nThank you for your active participation!\n\nBest regards,\nMIDSA Executive Committee & Secretariat'
+        );
+      }
+    } catch (err: any) {
+      console.error('Failed to delete template:', err);
+      setDeleteError(err.message || 'Failed to delete template');
+    } finally {
+      setIsDeletingTemplate(false);
     }
   };
 
@@ -296,7 +339,7 @@ export const BatchEmailModal: React.FC<BatchEmailModalProps> = ({
               <div className="flex items-center space-x-2 flex-1">
                 <FileText className="w-4 h-4 text-[#004ACD] shrink-0" />
                 <div className="flex-1">
-                  <span className="block text-[10px] font-bold uppercase text-slate-500">Preset Template:</span>
+                  <span className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">Preset Template:</span>
                   <select
                     value={selectedTemplateId}
                     onChange={(e) => handleSelectTemplate(e.target.value)}
@@ -463,15 +506,32 @@ export const BatchEmailModal: React.FC<BatchEmailModalProps> = ({
                   />
                 </div>
 
-                {/* Save Template Button */}
-                <div className="flex justify-end">
+                {/* Template Action Buttons: Delete Template & Save Template */}
+                {deleteError && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                    <span>{deleteError}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-end space-x-2">
+                  {selectedTemplateId && !selectedTemplateId.startsWith('new') && (
+                    <button
+                      type="button"
+                      onClick={handlePromptDeleteTemplate}
+                      title="Delete current template"
+                      className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Delete Template</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleSaveTemplate}
-                    className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-100 text-xs font-semibold text-slate-700 transition-colors"
+                    className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-100 text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
                   >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>{saveSuccess ? 'Template Saved!' : 'Save Template Preset'}</span>
+                    <Save className="w-3.5 h-3.5 text-[#004ACD]" />
+                    <span>{saveSuccess ? 'Template Saved!' : 'Save Template'}</span>
                   </button>
                 </div>
               </div>
@@ -688,6 +748,24 @@ export const BatchEmailModal: React.FC<BatchEmailModalProps> = ({
         senderName={senderName}
         subject={renderPersonalized(subject, targetScholars[0])}
         isSending={isSending}
+      />
+
+      {/* In-App Template Delete Confirmation Dialog */}
+      <ConfirmModal
+        isOpen={isDeleteModalOpen}
+        title="Delete Email Template"
+        message={`Are you sure you want to permanently delete the template "${
+          templates.find((t) => t.id === selectedTemplateId)?.name || templateName
+        }"?`}
+        detail="This template preset will be removed from your preset library. Registered scholars and past attendance records will not be affected."
+        confirmLabel="Yes, Delete Template"
+        cancelLabel="Cancel"
+        isDanger={true}
+        isLoading={isDeletingTemplate}
+        onConfirm={handleConfirmDeleteTemplate}
+        onClose={() => {
+          if (!isDeletingTemplate) setIsDeleteModalOpen(false);
+        }}
       />
     </>
   );

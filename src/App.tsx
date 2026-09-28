@@ -4,22 +4,41 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { TabType, Event, Scholar, DashboardStats } from './types';
-import { api } from './services/api';
+import type { TabType, Event, Scholar, DashboardStats, AdminUser } from './types';
+import { api, getStoredUser } from './services/api';
 import { Navbar } from './components/Navbar';
 import { DashboardView } from './components/DashboardView';
 import { EventsView } from './components/EventsView';
 import { ScholarsView } from './components/ScholarsView';
 import { AttendanceView } from './components/AttendanceView';
+import { SettingsView } from './components/SettingsView';
+import { LoginView } from './components/LoginView';
 import { QrBadgeModal } from './components/QrBadgeModal';
 import { CsvUploadModal } from './components/CsvUploadModal';
 import { EventModal } from './components/EventModal';
 import { ScholarModal } from './components/ScholarModal';
 import { BatchEmailModal } from './components/BatchEmailModal';
 import { realtimeSync } from './services/realtime';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle, Clock } from 'lucide-react';
+import midsaLogo from './assets/midsa-logo.png';
 
 export default function App() {
+  // Real-time Clock for Footer (updates every second)
+  const [currentClockTime, setCurrentClockTime] = useState<Date>(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentClockTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [adminUser, setAdminUser] = useState<AdminUser | null>(getStoredUser());
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+
+  // App Navigation & Data State
   const [currentTab, setCurrentTab] = useState<TabType>('dashboard');
   const [events, setEvents] = useState<Event[]>([]);
   const [scholars, setScholars] = useState<Scholar[]>([]);
@@ -40,8 +59,44 @@ export default function App() {
   const [isBatchEmailModalOpen, setIsBatchEmailModalOpen] = useState(false);
   const [selectedScholarForBadge, setSelectedScholarForBadge] = useState<Scholar | null>(null);
 
-  // Fetch all core datasets from SQLite backend
+  // Initial Auth Check: Checks ephemeral session storage and validates with backend
+  useEffect(() => {
+    async function verifyAuth() {
+      try {
+        const session = await api.checkSession();
+        if (session.authenticated && session.user) {
+          setIsAuthenticated(true);
+          setAdminUser(session.user);
+        } else {
+          setIsAuthenticated(false);
+          setAdminUser(null);
+        }
+      } catch (err) {
+        setIsAuthenticated(false);
+        setAdminUser(null);
+      } finally {
+        setIsAuthChecking(false);
+      }
+    }
+
+    verifyAuth();
+
+    // Listen for unauthorized events to auto-redirect to login
+    const handleUnauthorized = () => {
+      setIsAuthenticated(false);
+      setAdminUser(null);
+      realtimeSync.disconnect();
+    };
+
+    window.addEventListener('midsa-unauthorized', handleUnauthorized);
+    return () => {
+      window.removeEventListener('midsa-unauthorized', handleUnauthorized);
+    };
+  }, []);
+
+  // Fetch all core datasets from SQLite backend (Only when authenticated)
   const loadData = useCallback(async () => {
+    if (!isAuthenticated) return;
     try {
       setError(null);
       const [eventsData, scholarsData, statsData] = await Promise.all([
@@ -55,24 +110,49 @@ export default function App() {
       setStats(statsData);
     } catch (err: any) {
       console.error('Error fetching data from SQLite backend:', err);
-      setError('Failed to connect to backend server. Retrying...');
+      if (err.message?.includes('Unauthorized')) {
+        setIsAuthenticated(false);
+      } else {
+        setError('Failed to connect to backend server. Retrying...');
+      }
     } finally {
       setLoading(false);
     }
-  }, [selectedEventId]);
+  }, [isAuthenticated, selectedEventId]);
 
+  // Load data and connect realtime sync once authenticated
   useEffect(() => {
-    loadData();
-
-    // Auto-sync data whenever any device (phone, tablet, laptop) updates attendance, scholars, or events
-    const unsubscribe = realtimeSync.subscribe(() => {
+    if (isAuthenticated) {
+      setLoading(true);
       loadData();
-    });
+      realtimeSync.connect();
 
-    return () => {
-      unsubscribe();
-    };
-  }, [loadData]);
+      const unsubscribe = realtimeSync.subscribe(() => {
+        loadData();
+      });
+
+      return () => {
+        unsubscribe();
+      };
+    } else {
+      realtimeSync.disconnect();
+    }
+  }, [isAuthenticated, loadData]);
+
+  // Handlers for Authentication
+  const handleLoginSuccess = (user: AdminUser) => {
+    setAdminUser(user);
+    setIsAuthenticated(true);
+    setCurrentTab('dashboard');
+  };
+
+  const handleLogout = async () => {
+    await api.logout();
+    setIsAuthenticated(false);
+    setAdminUser(null);
+    setCurrentTab('dashboard');
+    realtimeSync.disconnect();
+  };
 
   // Handlers for Event operations
   const handleOpenCreateEvent = () => {
@@ -114,8 +194,32 @@ export default function App() {
     setCurrentTab('attendance');
   };
 
-  const activeEventsCount = events.filter((e) => e.status === 'ongoing' || e.status === 'upcoming').length;
+  // 1. Initial Authentication Check Loading State
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white px-4">
+        <div className="w-16 h-16 rounded-2xl bg-white p-2 flex items-center justify-center shadow-2xl mb-4 border border-white/20 animate-pulse">
+          <img
+            src={midsaLogo}
+            alt="MIDSA Logo"
+            className="w-full h-full object-contain"
+            referrerPolicy="no-referrer"
+          />
+        </div>
+        <Loader2 className="w-6 h-6 animate-spin text-[#00F7FF] mb-3" />
+        <p className="text-xs font-bold tracking-wider uppercase text-blue-200">
+          Securing MIDSA Attendance System...
+        </p>
+      </div>
+    );
+  }
 
+  // 2. Unauthenticated: Display Login Page strictly (blocks entire app from bypass)
+  if (!isAuthenticated) {
+    return <LoginView onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  // 3. Authenticated: Render Main Portal Application
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-[#333333]">
       {/* Top Main Navigation */}
@@ -124,6 +228,8 @@ export default function App() {
         onSelectTab={setCurrentTab}
         totalEventsCount={events.length}
         totalScholarsCount={scholars.length}
+        adminUser={adminUser}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}
@@ -136,7 +242,7 @@ export default function App() {
             </div>
             <button
               onClick={loadData}
-              className="text-xs font-bold text-[#004ACD] hover:underline"
+              className="text-xs font-bold text-[#004ACD] hover:underline cursor-pointer"
             >
               Retry
             </button>
@@ -197,14 +303,42 @@ export default function App() {
                 onRefreshData={loadData}
               />
             )}
+
+            {currentTab === 'settings' && (
+              <SettingsView
+                user={adminUser}
+                onUserUpdated={(updatedUser) => setAdminUser(updatedUser)}
+                onLogout={handleLogout}
+              />
+            )}
           </>
         )}
       </main>
 
       {/* Footer */}
-      <footer id="app-footer" className="bg-white border-t border-slate-200 py-4 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-xs text-slate-500">
+      <footer id="app-footer" className="bg-white border-t border-slate-200 py-3 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 gap-2">
           <span className="font-semibold text-slate-700">MIDSA Attendance System</span>
+          <div className="flex items-center space-x-2 text-xs text-slate-700">
+            <Clock className="w-3.5 h-3.5 text-[#004ACD] shrink-0" />
+            <span className="font-semibold text-slate-700">
+              {currentClockTime.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true,
+              })}
+            </span>
+            <span className="text-slate-300">|</span>
+            <span className="font-semibold text-slate-700">
+              {currentClockTime.toLocaleDateString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+              })}
+            </span>
+          </div>
         </div>
       </footer>
 

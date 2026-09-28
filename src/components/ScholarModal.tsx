@@ -679,7 +679,7 @@ export const ScholarModal: React.FC<ScholarModalProps> = ({
               <div>
                 <span className="font-bold">Automatic QR Code Generation</span>
                 <p className="text-slate-600 text-[11px]">
-                  Upon registration, a cryptographically signed MIDSA QR badge is instantly created with the formatted identity and ready for mobile scanner check-in.
+                  Upon registration, a cryptographically signed MIDSA QR badge is instantly created with the formatted identity and ready for mobile scanner sign-in.
                 </p>
               </div>
             </div>
@@ -731,7 +731,7 @@ export const ScholarModal: React.FC<ScholarModalProps> = ({
           <ConfirmModal
             isOpen={showDeleteConfirm}
             title="Delete Scholar Record"
-            message={`Are you sure you want to permanently delete ${scholarToEdit.name}? This will also delete their QR code registration and all attendance check-in records.`}
+            message={`Are you sure you want to permanently delete ${scholarToEdit.name}? This will also delete their QR code registration and all attendance sign-in records.`}
             detail={`Student ID: ${scholarToEdit.student_id} • ${scholarToEdit.year_program}`}
             confirmLabel="Yes, Delete Scholar"
             cancelLabel="Keep Scholar"

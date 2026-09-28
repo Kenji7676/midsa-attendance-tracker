@@ -127,4 +127,10 @@ export interface BatchEmailResponse {
   message: string;
 }
 
-export type TabType = 'dashboard' | 'events' | 'scholars' | 'attendance';
+export interface AdminUser {
+  id: string;
+  username: string;
+  displayName: string;
+}
+
+export type TabType = 'dashboard' | 'events' | 'scholars' | 'attendance' | 'settings';

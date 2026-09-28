@@ -17,7 +17,7 @@ import {
 import midsaLogo from '../assets/midsa-logo.png';
 import { getAccessToken, getCurrentUser, googleSignIn } from '../services/googleAuth';
 import { sendScholarEmailPass } from '../services/gmail';
-import { ConfirmEmailDispatchModal } from './ConfirmEmailDispatchModal';
+import { SelectTemplateModal } from './SelectTemplateModal';
 import { formatScholarName, resolveScholarScholarshipType } from '../utils/formatters';
 
 interface QrBadgeModalProps {
@@ -27,10 +27,9 @@ interface QrBadgeModalProps {
 
 export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) => {
   const [copied, setCopied] = useState(false);
-  const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [emailSuccess, setEmailSuccess] = useState<string | null>(null);
   const [emailError, setEmailError] = useState<string | null>(null);
-  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const badgeRef = useRef<HTMLDivElement>(null);
 
   // Keyboard shortcut: Esc to close pass
@@ -57,56 +56,10 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
     window.print();
   };
 
-  const handlePromptEmail = async () => {
+  const handlePromptEmail = () => {
     setEmailSuccess(null);
     setEmailError(null);
-
-    const token = await getAccessToken();
-    if (!token) {
-      try {
-        await googleSignIn();
-      } catch (err: any) {
-        if (err?.code !== 'auth/popup-closed-by-user') {
-          setEmailError('Please connect your Google account to send real emails.');
-        }
-        return;
-      }
-    }
-
-    setIsConfirmOpen(true);
-  };
-
-  const handleConfirmSend = async () => {
-    setIsConfirmOpen(false);
-    setIsSendingEmail(true);
-    setEmailSuccess(null);
-    setEmailError(null);
-
-    const user = getCurrentUser();
-    const formattedName = formatScholarName(scholar);
-
-    try {
-      const subject = `Your Official MIDSA Digital QR Pass - ${formattedName} (${scholar.student_id})`;
-      const body = `Dear ${formattedName},\n\nWe are pleased to provide you with your official MIDSA Digital Scholar Attendance Pass.\n\nYour Scholar Profile:\n• Student ID: ${scholar.student_id}\n• Year & Program: ${scholar.year_program}\n• College: ${scholar.college}\n• Registered Email: ${scholar.email}\n• Unique QR Code: ${scholar.qr_code}\n\nYour unique QR code is attached below and ready for scanning at our attendance check-in stations.\n\nThank you for your active participation!\n\nBest regards,\nMIDSA Executive Committee & Secretariat`;
-
-      const result = await sendScholarEmailPass({
-        scholar,
-        subject,
-        body,
-        senderName: 'MIDSA Attendance Office',
-        senderEmail: user?.email || undefined,
-      });
-
-      if (result.success) {
-        setEmailSuccess(`Pass successfully delivered to ${scholar.email} via Gmail!`);
-      } else {
-        setEmailError(result.error || 'Failed to deliver email');
-      }
-    } catch (err: any) {
-      setEmailError(err.message || 'Error transmitting email');
-    } finally {
-      setIsSendingEmail(false);
-    }
+    setIsTemplateModalOpen(true);
   };
 
   const currentUser = getCurrentUser();
@@ -224,7 +177,7 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
               {/* Security Footer */}
               <div className="mt-3 pt-2 text-center text-[10px] text-blue-200/70 font-medium flex items-center justify-center gap-1">
                 <Sparkles className="w-3 h-3 text-[#00F7FF]" />
-                <span>Scan at attendance station for instant check-in</span>
+                <span>Scan at attendance station for instant sign-in</span>
               </div>
             </div>
 
@@ -248,20 +201,10 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
                 type="button"
                 id="email-qr-pass-btn"
                 onClick={handlePromptEmail}
-                disabled={isSendingEmail}
-                className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#004ACD] to-[#0165CB] hover:from-[#0165CB] hover:to-[#004ACD] text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all disabled:opacity-50"
+                className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-[#004ACD] to-[#0165CB] hover:from-[#0165CB] hover:to-[#004ACD] text-white text-xs font-bold shadow-md shadow-blue-500/20 transition-all cursor-pointer"
               >
-                {isSendingEmail ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin text-white" />
-                    <span>Sending Real Email to {scholar.email}...</span>
-                  </>
-                ) : (
-                  <>
-                    <Mail className="w-4 h-4 text-[#00F7FF]" />
-                    <span>Email QR Pass to {scholar.email}</span>
-                  </>
-                )}
+                <Mail className="w-4 h-4 text-[#00F7FF]" />
+                <span>Email QR Pass to {scholar.email}</span>
               </button>
 
               <div className="grid grid-cols-2 gap-2.5">
@@ -295,16 +238,14 @@ export const QrBadgeModal: React.FC<QrBadgeModalProps> = ({ scholar, onClose }) 
         </div>
       </div>
 
-      {/* Mandatory User Confirmation Dialog */}
-      <ConfirmEmailDispatchModal
-        isOpen={isConfirmOpen}
-        onClose={() => setIsConfirmOpen(false)}
-        onConfirm={handleConfirmSend}
+      {/* Template Selector & Dispatch Modal */}
+      <SelectTemplateModal
+        isOpen={isTemplateModalOpen}
+        onClose={() => setIsTemplateModalOpen(false)}
         scholars={[scholar]}
-        senderEmail={currentUser?.email || ''}
-        senderName="MIDSA Attendance Office"
-        subject={`Your Official MIDSA Digital QR Pass - ${scholar.name} (${scholar.student_id})`}
-        isSending={isSendingEmail}
+        onSuccess={() => {
+          setEmailSuccess(`Pass successfully delivered to ${scholar.email} via Gmail!`);
+        }}
       />
     </>
   );
